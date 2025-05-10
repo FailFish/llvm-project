@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64ELFStreamer.h"
+#include "AArch64AddressingModes.h"
 #include "AArch64MCTargetDesc.h"
 #include "AArch64TargetStreamer.h"
 #include "llvm/ADT/DenseMap.h"
@@ -27,12 +28,14 @@
 #include "llvm/MC/MCELFStreamer.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbolELF.h"
 #include "llvm/MC/MCTargetOptions.h"
+#include "llvm/MC/MCValue.h"
 #include "llvm/MC/MCWinCOFFStreamer.h"
 #include "llvm/Support/AArch64BuildAttributes.h"
 #include "llvm/Support/Casting.h"
@@ -410,6 +413,686 @@ private:
   ElfMappingSymbol LastEMS;
   bool ImplicitMapSyms;
 };
+
+class AArch64LFIELFStreamer : public AArch64ELFStreamer {
+public:
+  AArch64LFIELFStreamer(MCContext &Context, std::unique_ptr<MCAsmBackend> TAB,
+                      std::unique_ptr<MCObjectWriter> OW,
+                      std::unique_ptr<MCCodeEmitter> Emitter)
+      : AArch64ELFStreamer(Context, std::move(TAB), std::move(OW),
+                        std::move(Emitter)) {}
+
+  ~AArch64LFIELFStreamer() override = default;
+private:
+  unsigned int getMemPre(unsigned int Op) {
+    switch (Op) {
+    case AArch64::LDRBBpre:
+      return AArch64::LDRBBroW;
+    case AArch64::LDRBpre:
+      return AArch64::LDRBroW;
+    case AArch64::LDRDpre:
+      return AArch64::LDRDroW;
+    case AArch64::LDRHHpre:
+      return AArch64::LDRHHroW;
+    case AArch64::LDRHpre:
+      return AArch64::LDRHroW;
+    case AArch64::LDRQpre:
+      return AArch64::LDRQroW;
+    case AArch64::LDRSBWpre:
+      return AArch64::LDRSBWui;
+    case AArch64::LDRSBXpre:
+      return AArch64::LDRSBXroW;
+    case AArch64::LDRSHWpre:
+      return AArch64::LDRSHWroW;
+    case AArch64::LDRSHXpre:
+      return AArch64::LDRSHXroW;
+    case AArch64::LDRSWpre:
+      return AArch64::LDRSWroW;
+    case AArch64::LDRSpre:
+      return AArch64::LDRSroW;
+    case AArch64::LDRWpre:
+      return AArch64::LDRWroW;
+    case AArch64::LDRXpre:
+      return AArch64::LDRXroW;
+    case AArch64::STRBBpre:
+      return AArch64::STRBBroW;
+    case AArch64::STRBpre:
+      return AArch64::STRBroW;
+    case AArch64::STRDpre:
+      return AArch64::STRDroW;
+    case AArch64::STRHHpre:
+      return AArch64::STRHHroW;
+    case AArch64::STRHpre:
+      return AArch64::STRHroW;
+    case AArch64::STRQpre:
+      return AArch64::STRQroW;
+    case AArch64::STRSpre:
+      return AArch64::STRSroW;
+    case AArch64::STRWpre:
+      return AArch64::STRWroW;
+    case AArch64::STRXpre:
+      return AArch64::STRXroW;
+    }
+    return AArch64::INSTRUCTION_LIST_END;
+  }
+
+  unsigned int getMemPost(unsigned int Op) {
+    switch (Op) {
+    case AArch64::LDRBBpost:
+      return AArch64::LDRBBroW;
+    case AArch64::LDRBpost:
+      return AArch64::LDRBroW;
+    case AArch64::LDRDpost:
+      return AArch64::LDRDroW;
+    case AArch64::LDRHHpost:
+      return AArch64::LDRHHroW;
+    case AArch64::LDRHpost:
+      return AArch64::LDRHroW;
+    case AArch64::LDRQpost:
+      return AArch64::LDRQroW;
+    case AArch64::LDRSBWpost:
+      return AArch64::LDRSBWui;
+    case AArch64::LDRSBXpost:
+      return AArch64::LDRSBXroW;
+    case AArch64::LDRSHWpost:
+      return AArch64::LDRSHWroW;
+    case AArch64::LDRSHXpost:
+      return AArch64::LDRSHXroW;
+    case AArch64::LDRSWpost:
+      return AArch64::LDRSWroW;
+    case AArch64::LDRSpost:
+      return AArch64::LDRSroW;
+    case AArch64::LDRWpost:
+      return AArch64::LDRWroW;
+    case AArch64::LDRXpost:
+      return AArch64::LDRXroW;
+    case AArch64::STRBBpost:
+      return AArch64::STRBBroW;
+    case AArch64::STRBpost:
+      return AArch64::STRBroW;
+    case AArch64::STRDpost:
+      return AArch64::STRDroW;
+    case AArch64::STRHHpost:
+      return AArch64::STRHHroW;
+    case AArch64::STRHpost:
+      return AArch64::STRHroW;
+    case AArch64::STRQpost:
+      return AArch64::STRQroW;
+    case AArch64::STRSpost:
+      return AArch64::STRSroW;
+    case AArch64::STRWpost:
+      return AArch64::STRWroW;
+    case AArch64::STRXpost:
+      return AArch64::STRXroW;
+    }
+    return AArch64::INSTRUCTION_LIST_END;
+    return AArch64::INSTRUCTION_LIST_END;
+  }
+
+  unsigned int getMemRegX(unsigned int Op, unsigned &Shift) {
+    Shift = 0;
+    switch (Op) {
+    case AArch64::LDRBBroX:
+      return AArch64::LDRBBroW;
+    case AArch64::LDRBroX:
+      return AArch64::LDRBroW;
+    case AArch64::LDRDroX:
+      Shift = 3;
+      return AArch64::LDRDroW;
+    case AArch64::LDRHHroX:
+      Shift = 1;
+      return AArch64::LDRHHroW;
+    case AArch64::LDRHroX:
+      Shift = 1;
+      return AArch64::LDRHroW;
+    case AArch64::LDRQroX:
+      Shift = 4;
+      return AArch64::LDRQroW;
+    case AArch64::LDRSBWroX:
+      Shift = 1;
+      return AArch64::LDRSBWui;
+    case AArch64::LDRSBXroX:
+      Shift = 1;
+      return AArch64::LDRSBXroW;
+    case AArch64::LDRSHWroX:
+      Shift = 1;
+      return AArch64::LDRSHWroW;
+    case AArch64::LDRSHXroX:
+      Shift = 1;
+      return AArch64::LDRSHXroW;
+    case AArch64::LDRSWroX:
+      Shift = 2;
+      return AArch64::LDRSWroW;
+    case AArch64::LDRSroX:
+      Shift = 2;
+      return AArch64::LDRSroW;
+    case AArch64::LDRWroX:
+      Shift = 2;
+      return AArch64::LDRWroW;
+    case AArch64::LDRXroX:
+      Shift = 3;
+      return AArch64::LDRXroW;
+    case AArch64::STRBBroX:
+      return AArch64::STRBBroW;
+    case AArch64::STRBroX:
+      return AArch64::STRBroW;
+    case AArch64::STRDroX:
+      Shift = 3;
+      return AArch64::STRDroW;
+    case AArch64::STRHHroX:
+      Shift = 1;
+      return AArch64::STRHHroW;
+    case AArch64::STRHroX:
+      Shift = 1;
+      return AArch64::STRHroW;
+    case AArch64::STRQroX:
+      Shift = 4;
+      return AArch64::STRQroW;
+    case AArch64::STRSroX:
+      Shift = 2;
+      return AArch64::STRSroW;
+    case AArch64::STRWroX:
+      Shift = 2;
+      return AArch64::STRWroW;
+    case AArch64::STRXroX:
+      Shift = 3;
+      return AArch64::STRXroW;
+    }
+    return AArch64::INSTRUCTION_LIST_END;
+  }
+
+  unsigned int getMemRegW(unsigned int Op, unsigned &Shift) {
+    Shift = 0;
+    switch (Op) {
+    case AArch64::LDRBBroW:
+      return AArch64::LDRBBroW;
+    case AArch64::LDRBroW:
+      return AArch64::LDRBroW;
+    case AArch64::LDRDroW:
+      Shift = 3;
+      return AArch64::LDRDroW;
+    case AArch64::LDRHHroW:
+      Shift = 1;
+      return AArch64::LDRHHroW;
+    case AArch64::LDRHroW:
+      Shift = 1;
+      return AArch64::LDRHroW;
+    case AArch64::LDRQroW:
+      Shift = 4;
+      return AArch64::LDRQroW;
+    case AArch64::LDRSBWroW:
+      Shift = 1;
+      return AArch64::LDRSBWui;
+    case AArch64::LDRSBXroW:
+      Shift = 1;
+      return AArch64::LDRSBXroW;
+    case AArch64::LDRSHWroW:
+      Shift = 1;
+      return AArch64::LDRSHWroW;
+    case AArch64::LDRSHXroW:
+      Shift = 1;
+      return AArch64::LDRSHXroW;
+    case AArch64::LDRSWroW:
+      Shift = 2;
+      return AArch64::LDRSWroW;
+    case AArch64::LDRSroW:
+      Shift = 2;
+      return AArch64::LDRSroW;
+    case AArch64::LDRWroW:
+      Shift = 2;
+      return AArch64::LDRWroW;
+    case AArch64::LDRXroW:
+      Shift = 3;
+      return AArch64::LDRXroW;
+    case AArch64::STRBBroW:
+      return AArch64::STRBBroW;
+    case AArch64::STRBroW:
+      return AArch64::STRBroW;
+    case AArch64::STRDroW:
+      Shift = 3;
+      return AArch64::STRDroW;
+    case AArch64::STRHHroW:
+      Shift = 1;
+      return AArch64::STRHHroW;
+    case AArch64::STRHroW:
+      Shift = 1;
+      return AArch64::STRHroW;
+    case AArch64::STRQroW:
+      Shift = 4;
+      return AArch64::STRQroW;
+    case AArch64::STRSroW:
+      Shift = 2;
+      return AArch64::STRSroW;
+    case AArch64::STRWroW:
+      Shift = 2;
+      return AArch64::STRWroW;
+    case AArch64::STRXroW:
+      Shift = 3;
+      return AArch64::STRXroW;
+    }
+    return AArch64::INSTRUCTION_LIST_END;
+  }
+
+  unsigned int getMemSimple(unsigned int Op) {
+    switch (Op) {
+    case AArch64::LDRBBui:
+      return AArch64::LDRBBroW;
+    case AArch64::LDRBui:
+      return AArch64::LDRBroW;
+    case AArch64::LDRDui:
+      return AArch64::LDRDroW;
+    case AArch64::LDRHHui:
+      return AArch64::LDRHHroW;
+    case AArch64::LDRHui:
+      return AArch64::LDRHroW;
+    case AArch64::LDRQui:
+      return AArch64::LDRQroW;
+    case AArch64::LDRSBWui:
+      return AArch64::LDRSBWui;
+    case AArch64::LDRSBXui:
+      return AArch64::LDRSBXroW;
+    case AArch64::LDRSHWui:
+      return AArch64::LDRSHWroW;
+    case AArch64::LDRSHXui:
+      return AArch64::LDRSHXroW;
+    case AArch64::LDRSWui:
+      return AArch64::LDRSWroW;
+    case AArch64::LDRSui:
+      return AArch64::LDRSroW;
+    case AArch64::LDRWui:
+      return AArch64::LDRWroW;
+    case AArch64::LDRXui:
+      return AArch64::LDRXroW;
+    case AArch64::STRBBui:
+      return AArch64::STRBBroW;
+    case AArch64::STRBui:
+      return AArch64::STRBroW;
+    case AArch64::STRDui:
+      return AArch64::STRDroW;
+    case AArch64::STRHHui:
+      return AArch64::STRHHroW;
+    case AArch64::STRHui:
+      return AArch64::STRHroW;
+    case AArch64::STRQui:
+      return AArch64::STRQroW;
+    case AArch64::STRSui:
+      return AArch64::STRSroW;
+    case AArch64::STRWui:
+      return AArch64::STRWroW;
+    case AArch64::STRXui:
+      return AArch64::STRXroW;
+    }
+    return AArch64::INSTRUCTION_LIST_END;
+  }
+
+  bool isMemNoMaskAddr(unsigned Op) {
+    unsigned Shift;
+    return getMemSimple(Op) == AArch64::INSTRUCTION_LIST_END &&
+      getMemPre(Op) == AArch64::INSTRUCTION_LIST_END &&
+      getMemPost(Op) == AArch64::INSTRUCTION_LIST_END &&
+      getMemRegX(Op, Shift) == AArch64::INSTRUCTION_LIST_END &&
+      getMemRegW(Op, Shift) == AArch64::INSTRUCTION_LIST_END &&
+      getMemN(Op) != 0;
+  }
+
+  unsigned getMemN(unsigned Op) {
+    switch (Op) {
+    case AArch64::STXPW:
+    case AArch64::STXPX:
+      return 3;
+    case AArch64::LDPDi:
+    case AArch64::LDPDpost:
+    case AArch64::LDPDpre:
+    case AArch64::LDPQi:
+    case AArch64::LDPQpost:
+    case AArch64::LDPQpre:
+    case AArch64::LDPSWi:
+    case AArch64::LDPSWpost:
+    case AArch64::LDPSWpre:
+    case AArch64::LDPSi:
+    case AArch64::LDPSpost:
+    case AArch64::LDPSpre:
+    case AArch64::LDPWi:
+    case AArch64::LDPWpost:
+    case AArch64::LDPWpre:
+    case AArch64::LDPXi:
+    case AArch64::LDPXpost:
+    case AArch64::LDPXpre:
+    case AArch64::STPDi:
+    case AArch64::STPDpost:
+    case AArch64::STPDpre:
+    case AArch64::STPQi:
+    case AArch64::STPQpost:
+    case AArch64::STPQpre:
+    case AArch64::STPSi:
+    case AArch64::STPSpost:
+    case AArch64::STPSpre:
+    case AArch64::STPWi:
+    case AArch64::STPWpost:
+    case AArch64::STPWpre:
+    case AArch64::STPXi:
+    case AArch64::STPXpost:
+    case AArch64::STPXpre:
+    case AArch64::STXRB:
+    case AArch64::STXRH:
+    case AArch64::STXRW:
+    case AArch64::STXRX:
+      return 2;
+    case AArch64::LDURBBi:
+    case AArch64::LDURBi:
+    case AArch64::LDURDi:
+    case AArch64::LDURHHi:
+    case AArch64::LDURHi:
+    case AArch64::LDURQi:
+    case AArch64::LDURSBWi:
+    case AArch64::LDURSBXi:
+    case AArch64::LDURSHWi:
+    case AArch64::LDURSHXi:
+    case AArch64::LDURSWi:
+    case AArch64::LDURSi:
+    case AArch64::LDURWi:
+    case AArch64::LDURXi:
+    case AArch64::STURBBi:
+    case AArch64::STURBi:
+    case AArch64::STURDi:
+    case AArch64::STURHHi:
+    case AArch64::STURHi:
+    case AArch64::STURQi:
+    case AArch64::STURSi:
+    case AArch64::STURWi:
+    case AArch64::STURXi:
+    case AArch64::STTRBi:
+    case AArch64::STTRHi:
+    case AArch64::STTRWi:
+    case AArch64::STTRXi:
+    case AArch64::STTXRWr:
+    case AArch64::STTXRXr:
+      return 1;
+    }
+    return 0;
+  }
+
+  void emitRRRI0(unsigned int Opcode, MCRegister Rd, MCRegister Rt1, MCRegister Rt2, int64_t Imm, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Opcode);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    SafeInst.addOperand(MCOperand::createReg(Rt1));
+    SafeInst.addOperand(MCOperand::createReg(Rt2));
+    SafeInst.addOperand(MCOperand::createImm(Imm));
+    SafeInst.addOperand(MCOperand::createImm(0));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitRRRI(unsigned int Opcode, MCRegister Rd, MCRegister Rt1, MCRegister Rt2, int64_t Imm, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Opcode);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    SafeInst.addOperand(MCOperand::createReg(Rt1));
+    SafeInst.addOperand(MCOperand::createReg(Rt2));
+    SafeInst.addOperand(MCOperand::createImm(Imm));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitRRI(unsigned int Op, MCRegister Rd, MCRegister Rs, int64_t Imm, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Op);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    SafeInst.addOperand(MCOperand::createReg(Rs));
+    SafeInst.addOperand(MCOperand::createImm(Imm));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitRRR(unsigned int Op, MCRegister Rd, MCRegister Rs1, MCRegister Rs2, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Op);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    SafeInst.addOperand(MCOperand::createReg(Rs1));
+    SafeInst.addOperand(MCOperand::createReg(Rs2));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitR(unsigned int Op, MCRegister Rd, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Op);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitMemMask(unsigned int Opcode, MCRegister Rd, MCRegister Rt, const MCSubtargetInfo &STI) {
+    emitRRRI0(Opcode, Rd, AArch64::X21, Rt, AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0), STI);
+  }
+
+  void emitAddMask(MCRegister AddrReg, const MCSubtargetInfo &STI) {
+    emitRRRI0(AArch64::ADDXrx, AArch64::X18, AArch64::X21, AddrReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+  }
+
+  void emitSafeMemN(unsigned N, const MCInst &Inst, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Inst.getOpcode());
+    for (unsigned I = 0; I < N; I++)
+      SafeInst.addOperand(Inst.getOperand(I));
+    SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
+    for (unsigned I = N + 1; I < Inst.getNumOperands(); I++)
+      SafeInst.addOperand(Inst.getOperand(I));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitSafeMem1(const MCInst &Inst, const MCSubtargetInfo &STI) {
+    emitSafeMemN(1, Inst, STI);
+  }
+
+  void emitSafeMem2(const MCInst &Inst, const MCSubtargetInfo &STI) {
+    emitSafeMemN(2, Inst, STI);
+  }
+
+  void emitIndirectBranch(unsigned int Opcode, MCRegister Rt, const MCInst &Inst, const MCSubtargetInfo &STI) {
+    if (Rt == AArch64::LR) {
+      AArch64ELFStreamer::emitInstruction(Inst, STI);
+      return;
+    }
+    emitAddMask(Rt, STI);
+    MCInst SafeInst;
+    SafeInst.setOpcode(Opcode);
+    SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitMov(MCRegister Dest, MCRegister Src, const MCSubtargetInfo &STI) {
+    emitRRRI(AArch64::ORRXrs, Dest, AArch64::XZR, Src, 0, STI);
+  }
+
+  enum RTCallType {
+    RT_Syscall,
+    RT_TLSRead,
+    RT_TLSWrite,
+  };
+
+  void emitRTCall(RTCallType CallType, const MCSubtargetInfo &STI) {
+    emitMov(AArch64::X22, AArch64::LR, STI);
+    unsigned Offset;
+    switch (CallType) {
+    case RT_Syscall: Offset = 0; break;
+    case RT_TLSRead: Offset = 1; break;
+    case RT_TLSWrite: Offset = 2; break;
+    }
+    emitRRI(AArch64::LDRXui, AArch64::LR, AArch64::X21, Offset, STI);
+    emitR(AArch64::BLR, AArch64::LR, STI);
+    emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+  }
+
+  void emitSyscall(const MCSubtargetInfo &STI) {
+    emitRTCall(RT_Syscall, STI);
+  }
+
+  void emitSwap(MCRegister Reg1, MCRegister Reg2, const MCSubtargetInfo &STI) {
+    emitRRRI(AArch64::EORXrs, Reg1, Reg1, Reg2, 0, STI);
+    emitRRRI(AArch64::EORXrs, Reg2, Reg1, Reg2, 0, STI);
+    emitRRRI(AArch64::EORXrs, Reg1, Reg1, Reg2, 0, STI);
+  }
+
+  void emitTLSRead(const MCInst &Inst, const MCSubtargetInfo &STI) {
+    MCRegister Reg = Inst.getOperand(0).getReg();
+    if (Reg == AArch64::X0) {
+      emitRTCall(RT_TLSRead, STI);
+    } else {
+      emitMov(Reg, AArch64::X0, STI);
+      emitRTCall(RT_TLSRead, STI);
+      emitSwap(AArch64::X0, Reg, STI);
+    }
+  }
+
+  void emitTLSWrite(const MCInst &Inst, const MCSubtargetInfo &STI) {
+    MCRegister Reg = Inst.getOperand(1).getReg();
+    if (Reg == AArch64::X0) {
+      emitRTCall(RT_TLSWrite, STI);
+    } else {
+      emitSwap(AArch64::X0, Reg, STI);
+      emitRTCall(RT_TLSWrite, STI);
+      emitSwap(AArch64::X0, Reg, STI);
+    }
+  }
+
+public:
+  /// This function is the one used to emit instruction data into the ELF
+  /// streamer.  We override it to mask dangerous instructions.
+  void emitInstruction(const MCInst &Inst,
+                       const MCSubtargetInfo &STI) override {
+    MCRegister Reg;
+    switch (Inst.getOpcode()) {
+    case AArch64::BR:
+    case AArch64::BLR:
+    case AArch64::RET:
+      emitIndirectBranch(Inst.getOpcode(), Inst.getOperand(0).getReg(), Inst, STI);
+      return;
+    case AArch64::SVC:
+      emitSyscall(STI);
+      return;
+    case AArch64::MRS:
+      if (Inst.getOperand(1).getReg() == AArch64SysReg::TPIDR_EL0) {
+        emitTLSRead(Inst, STI);
+        return;
+      }
+      break;
+    case AArch64::MSR:
+      if (Inst.getOperand(0).getReg() == AArch64SysReg::TPIDR_EL0) {
+        emitTLSWrite(Inst, STI);
+        return;
+      }
+      break;
+    case AArch64::ADDXri:
+    case AArch64::SUBXri:
+      Reg = Inst.getOperand(0).getReg();
+      if (Reg != AArch64::SP)
+        break;
+      if (Inst.getOperand(2).getImm() == 0) {
+        emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      } else {
+        emitRRI(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getImm(), STI);
+        emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      }
+      return;
+    case AArch64::ADDXrr:
+    case AArch64::SUBXrr:
+    case AArch64::ADDXrs:
+    case AArch64::SUBXrs:
+    case AArch64::ADDXrx:
+    case AArch64::SUBXrx:
+    case AArch64::ADDXrx64:
+    case AArch64::SUBXrx64:
+      Reg = Inst.getOperand(0).getReg();
+      if (Reg != AArch64::SP)
+        break;
+      emitRRR(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getReg(), STI);
+      emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      return;
+    case AArch64::ORRXrs:
+      Reg = Inst.getOperand(0).getReg();
+      if (Reg != AArch64::SP)
+        break;
+      emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      return;
+    }
+
+    if (isMemNoMaskAddr(Inst.getOpcode())) {
+      unsigned N = getMemN(Inst.getOpcode());
+      if (Inst.getOperand(N).getReg() == AArch64::SP) {
+        AArch64ELFStreamer::emitInstruction(Inst, STI);
+        return;
+      }
+      emitAddMask(Inst.getOperand(N).getReg(), STI);
+      emitSafeMemN(N, Inst, STI);
+      return;
+    }
+
+    unsigned MemOp;
+    if ((MemOp = getMemSimple(Inst.getOpcode())) != AArch64::INSTRUCTION_LIST_END) {
+      if (Inst.getOperand(1).getReg() == AArch64::SP) {
+        AArch64ELFStreamer::emitInstruction(Inst, STI);
+        return;
+      }
+      if (Inst.getOperand(2).getImm() == 0) {
+        emitMemMask(MemOp, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), STI);
+      } else {
+        emitAddMask(Inst.getOperand(1).getReg(), STI);
+        emitSafeMem1(Inst, STI);
+      }
+      return;
+    }
+    if ((MemOp = getMemPre(Inst.getOpcode())) != AArch64::INSTRUCTION_LIST_END) {
+      if (Inst.getOperand(1).getReg() == AArch64::SP) {
+        AArch64ELFStreamer::emitInstruction(Inst, STI);
+        return;
+      }
+      MCRegister Reg = Inst.getOperand(1).getReg();
+      int64_t Imm = Inst.getOperand(2).getImm();
+      emitRRI(AArch64::ADDXri, Reg, Reg, Imm, STI);
+      emitMemMask(MemOp, Inst.getOperand(0).getReg(), Reg, STI);
+      return;
+    }
+    if ((MemOp = getMemPost(Inst.getOpcode())) != AArch64::INSTRUCTION_LIST_END) {
+      if (Inst.getOperand(1).getReg() == AArch64::SP) {
+        AArch64ELFStreamer::emitInstruction(Inst, STI);
+        return;
+      }
+      MCRegister Reg = Inst.getOperand(1).getReg();
+      int64_t Imm = Inst.getOperand(2).getImm();
+      emitMemMask(MemOp, Inst.getOperand(0).getReg(), Reg, STI);
+      emitRRI(AArch64::ADDXri, Reg, Reg, Imm, STI);
+      return;
+    }
+    unsigned Shift;
+    if ((MemOp = getMemRegX(Inst.getOpcode(), Shift)) != AArch64::INSTRUCTION_LIST_END) {
+      MCRegister Reg1 = Inst.getOperand(1).getReg();
+      MCRegister Reg2 = Inst.getOperand(2).getReg();
+      int64_t Extend = Inst.getOperand(3).getImm();
+      int64_t IsShift = Inst.getOperand(4).getImm();
+      if (!IsShift)
+        Shift = 0;
+      if (Extend)
+        emitRRRI0(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift), STI);
+      else
+        emitRRRI0(AArch64::ADDXrs, AArch64::X22, Reg1, Reg2, AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift), STI);
+      emitMemMask(MemOp, Inst.getOperand(0).getReg(), AArch64::X22, STI);
+      return;
+    }
+    if ((MemOp = getMemRegW(Inst.getOpcode(), Shift)) != AArch64::INSTRUCTION_LIST_END) {
+      MCRegister Reg1 = Inst.getOperand(1).getReg();
+      MCRegister Reg2 = Inst.getOperand(2).getReg();
+      int64_t S = Inst.getOperand(3).getImm();
+      int64_t IsShift = Inst.getOperand(4).getImm();
+      if (!IsShift)
+        Shift = 0;
+      if (S)
+        emitRRRI0(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTW, Shift), STI);
+      else
+        emitRRRI0(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, Shift), STI);
+      emitMemMask(MemOp, Inst.getOperand(0).getReg(), AArch64::X22, STI);
+      return;
+    }
+
+    AArch64ELFStreamer::emitInstruction(Inst, STI);
+  }
+};
 } // end anonymous namespace
 
 AArch64ELFStreamer &AArch64TargetELFStreamer::getStreamer() {
@@ -562,5 +1245,14 @@ llvm::createAArch64ELFStreamer(const Triple &, MCContext &Context,
                                std::unique_ptr<MCObjectWriter> &&OW,
                                std::unique_ptr<MCCodeEmitter> &&Emitter) {
   return new AArch64ELFStreamer(Context, std::move(TAB), std::move(OW),
+                                std::move(Emitter));
+}
+
+MCStreamer *
+llvm::createAArch64LFIELFStreamer(const Triple &, MCContext &Context,
+                                  std::unique_ptr<MCAsmBackend> &&TAB,
+                                  std::unique_ptr<MCObjectWriter> &&OW,
+                                  std::unique_ptr<MCCodeEmitter> &&Emitter) {
+  return new AArch64LFIELFStreamer(Context, std::move(TAB), std::move(OW),
                                 std::move(Emitter));
 }

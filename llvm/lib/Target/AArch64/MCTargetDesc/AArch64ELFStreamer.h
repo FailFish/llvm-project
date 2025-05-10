@@ -21,6 +21,11 @@ MCStreamer *createAArch64ELFStreamer(const Triple &, MCContext &Context,
                                      std::unique_ptr<MCAsmBackend> &&TAB,
                                      std::unique_ptr<MCObjectWriter> &&OW,
                                      std::unique_ptr<MCCodeEmitter> &&Emitter);
+
+MCStreamer *createAArch64LFIELFStreamer(const Triple &, MCContext &Context,
+                                        std::unique_ptr<MCAsmBackend> &&TAB,
+                                        std::unique_ptr<MCObjectWriter> &&OW,
+                                        std::unique_ptr<MCCodeEmitter> &&Emitter);
 }
 
 #endif

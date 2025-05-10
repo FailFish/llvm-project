@@ -186,6 +186,7 @@ public:
     Freescale,
     IBM,
     ImaginationTechnologies,
+    LFI,
     MipsTechnologies,
     NVIDIA,
     CSR,
@@ -848,6 +849,10 @@ public:
   }
 
   bool isVulkanOS() const { return getOS() == Triple::Vulkan; }
+
+  bool isVendorLFI() const {
+    return getVendor() == Triple::LFI;
+  }
 
   bool isShaderStageEnvironment() const {
     EnvironmentType Env = getEnvironment();

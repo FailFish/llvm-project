@@ -263,6 +263,7 @@ StringRef Triple::getVendorTypeName(VendorType Kind) {
   case ImaginationTechnologies: return "img";
   case Intel:
     return "intel";
+  case LFI: return "lfi";
   case Mesa: return "mesa";
   case MipsTechnologies: return "mti";
   case NVIDIA: return "nvidia";
@@ -656,6 +657,7 @@ static Triple::VendorType parseVendor(StringRef VendorName) {
       .Case("fsl", Triple::Freescale)
       .Case("ibm", Triple::IBM)
       .Case("img", Triple::ImaginationTechnologies)
+      .Case("lfi", Triple::LFI)
       .Case("mti", Triple::MipsTechnologies)
       .Case("nvidia", Triple::NVIDIA)
       .Case("csr", Triple::CSR)

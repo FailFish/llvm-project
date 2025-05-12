@@ -2377,7 +2377,10 @@ public:
       }
       MCRegister Reg = Inst.getOperand(2).getReg();
       int64_t Imm = Inst.getOperand(3).getImm();
-      emitRRI0(AArch64::ADDXri, Reg, Reg, Imm, STI);
+      if (Imm >= 0)
+        emitRRI0(AArch64::ADDXri, Reg, Reg, Imm, STI);
+      else
+        emitRRI0(AArch64::SUBXri, Reg, Reg, -Imm, STI);
       emitMemMask(MemOp, Inst.getOperand(1).getReg(), Reg, STI);
       return;
     }
@@ -2387,9 +2390,12 @@ public:
         return;
       }
       MCRegister Reg = Inst.getOperand(2).getReg();
-      int64_t Imm = Inst.getOperand(3).getImm();
       emitMemMask(MemOp, Inst.getOperand(1).getReg(), Reg, STI);
-      emitRRI0(AArch64::ADDXri, Reg, Reg, Imm, STI);
+      int64_t Imm = Inst.getOperand(3).getImm();
+      if (Imm >= 0)
+        emitRRI0(AArch64::ADDXri, Reg, Reg, Imm, STI);
+      else
+        emitRRI0(AArch64::SUBXri, Reg, Reg, -Imm, STI);
       return;
     }
     unsigned Shift;

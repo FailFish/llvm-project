@@ -95,6 +95,8 @@ test_mem_basic:
 	ldr x0, [x1, #16]
 	ldr x0, [x1, #16]!
 	ldr x0, [x1], #16
+	ldr x0, [x1, #-8]!
+	ldr x0, [x1], #-8
 # CHECK-LABEL: <test_mem_basic>:
 # CHECK:       ldr x0, [x21, w1, uxtw]
 # CHECK-NEXT:  str x0, [x21, w2, uxtw]
@@ -104,6 +106,10 @@ test_mem_basic:
 # CHECK-NEXT:  ldr x0, [x21, w1, uxtw]
 # CHECK-NEXT:  ldr x0, [x21, w1, uxtw]
 # CHECK-NEXT:  add x1, x1, #16
+# CHECK-NEXT:  sub x1, x1, #8
+# CHECK-NEXT:  ldr x0, [x21, w1, uxtw]
+# CHECK-NEXT:  ldr x0, [x21, w1, uxtw]
+# CHECK-NEXT:  sub x1, x1, #8
 
 test_mem:
 	ld1 { v0.s }[1], [x8]

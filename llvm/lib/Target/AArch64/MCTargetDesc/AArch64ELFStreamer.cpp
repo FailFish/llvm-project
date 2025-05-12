@@ -1638,7 +1638,7 @@ private:
     case AArch64::LDRQpre:
       return AArch64::LDRQroW;
     case AArch64::LDRSBWpre:
-      return AArch64::LDRSBWui;
+      return AArch64::LDRSBWroW;
     case AArch64::LDRSBXpre:
       return AArch64::LDRSBXroW;
     case AArch64::LDRSHWpre:
@@ -1690,7 +1690,7 @@ private:
     case AArch64::LDRQpost:
       return AArch64::LDRQroW;
     case AArch64::LDRSBWpost:
-      return AArch64::LDRSBWui;
+      return AArch64::LDRSBWroW;
     case AArch64::LDRSBXpost:
       return AArch64::LDRSBXroW;
     case AArch64::LDRSHWpost:
@@ -1748,7 +1748,7 @@ private:
       return AArch64::LDRQroW;
     case AArch64::LDRSBWroX:
       Shift = 1;
-      return AArch64::LDRSBWui;
+      return AArch64::LDRSBWroW;
     case AArch64::LDRSBXroX:
       Shift = 1;
       return AArch64::LDRSBXroW;
@@ -1820,7 +1820,7 @@ private:
       return AArch64::LDRQroW;
     case AArch64::LDRSBWroW:
       Shift = 1;
-      return AArch64::LDRSBWui;
+      return AArch64::LDRSBWroW;
     case AArch64::LDRSBXroW:
       Shift = 1;
       return AArch64::LDRSBXroW;
@@ -1886,7 +1886,7 @@ private:
     case AArch64::LDRQui:
       return AArch64::LDRQroW;
     case AArch64::LDRSBWui:
-      return AArch64::LDRSBWui;
+      return AArch64::LDRSBWroW;
     case AArch64::LDRSBXui:
       return AArch64::LDRSBXroW;
     case AArch64::LDRSHWui:

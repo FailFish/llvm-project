@@ -48,6 +48,7 @@ test_spmod:
 # CHECK-NEXT:  add x22, sp, x0
 # CHECK-NEXT:  add sp, x21, w22, uxtw
 # CHECK-NEXT:  sub x22, sp, x0
+# CHECK-NEXT:  add sp, x21, w22, uxtw
 # CHECK-NEXT:  add sp, x21, w0, uxtw
 
 test_ramod:
@@ -104,22 +105,65 @@ test_mem_basic:
 # CHECK-NEXT:  ldr x0, [x21, w1, uxtw]
 # CHECK-NEXT:  add x1, x1, #16
 
+test_mem:
+	ld1 { v0.s }[1], [x8]
+	ld1r { v3.2d }, [x9]
+	ld1 { v0.s }[1], [x8], x10
+# CHECK-LABEL: <test_mem>:
+# CHECK:       add x18, x21, w8, uxtw
+# CHECK-NEXT:  ld1 { v0.s }[1], [x18]
+# CHECK-NEXT:  add x18, x21, w9, uxtw
+# CHECK-NEXT:  ld1r { v3.2d }, [x18]
+# CHECK-NEXT:  add x18, x21, w8, uxtw
+# CHECK-NEXT:  ld1 { v0.s }[1], [x18]
+# CHECK-NEXT:  add x8, x8, x10
+
 test_mem_pair:
 	ldp x0, x1, [x2]
 	stp x0, x1, [x2]
 	ldp x0, x1, [x2, #16]
 	ldp x0, x1, [x2, #16]!
 	ldp x0, x1, [x2], #16
+	ldp w0, w1, [x2, #16]!
+	ldp w0, w1, [x2], #16
+	ldaxp x0, x1, [x2]
+	ldxp x0, x1, [x2]
+	stxp w0, x1, x2, [x3]
+	stlxp w0, x1, x2, [x3]
 # CHECK-LABEL: <test_mem_pair>:
 # CHECK:       add x18, x21, w2, uxtw
 # CHECK-NEXT:  ldp x0, x1, [x18]
+
 # CHECK-NEXT:  add x18, x21, w2, uxtw
 # CHECK-NEXT:  stp x0, x1, [x18]
+
 # CHECK-NEXT:  add x18, x21, w2, uxtw
 # CHECK-NEXT:  ldp x0, x1, [x18, #16]
+
 # CHECK-NEXT:  add x18, x21, w2, uxtw
 # CHECK-NEXT:  ldp x0, x1, [x18, #16]
 # CHECK-NEXT:  add x2, x2, #16
+
 # CHECK-NEXT:  add x18, x21, w2, uxtw
 # CHECK-NEXT:  ldp x0, x1, [x18]
 # CHECK-NEXT:  add x2, x2, #16
+
+# CHECK-NEXT:  add x18, x21, w2, uxtw
+# CHECK-NEXT:  ldp w0, w1, [x18, #16]
+# CHECK-NEXT:  add x2, x2, #16
+
+# CHECK-NEXT:  add x18, x21, w2, uxtw
+# CHECK-NEXT:  ldp w0, w1, [x18]
+# CHECK-NEXT:  add x2, x2, #16
+
+# CHECK-NEXT:  add x18, x21, w2, uxtw
+# CHECK-NEXT:  ldaxp x0, x1, [x18]
+
+# CHECK-NEXT:  add x18, x21, w2, uxtw
+# CHECK-NEXT:  ldxp x0, x1, [x18]
+
+# CHECK-NEXT:  add x18, x21, w3, uxtw
+# CHECK-NEXT:  stxp w0, x1, x2, [x18]
+
+# CHECK-NEXT:  add x18, x21, w3, uxtw
+# CHECK-NEXT:  stlxp w0, x1, x2, [x18]

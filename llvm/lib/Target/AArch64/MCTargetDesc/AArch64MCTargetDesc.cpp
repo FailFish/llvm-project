@@ -526,7 +526,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAArch64TargetMC() {
     TargetRegistry::RegisterMCCodeEmitter(*T, createAArch64MCCodeEmitter);
 
     // Register the obj streamers.
-    TargetRegistry::RegisterELFStreamer(*T, createAArch64LFIELFStreamer);
+    TargetRegistry::RegisterELFStreamer(*T, createAArch64ELFStreamer);
     TargetRegistry::RegisterMachOStreamer(*T, createMachOStreamer);
     TargetRegistry::RegisterCOFFStreamer(*T, createAArch64WinCOFFStreamer);
 

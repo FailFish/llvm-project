@@ -2572,19 +2572,13 @@ llvm::createAArch64AsmTargetStreamer(MCStreamer &S, formatted_raw_ostream &OS,
 }
 
 MCStreamer *
-llvm::createAArch64ELFStreamer(const Triple &, MCContext &Context,
+llvm::createAArch64ELFStreamer(const Triple &TheTriple, MCContext &Context,
                                std::unique_ptr<MCAsmBackend> &&TAB,
                                std::unique_ptr<MCObjectWriter> &&OW,
                                std::unique_ptr<MCCodeEmitter> &&Emitter) {
+  if (TheTriple.isVendorLFI())
+    return new AArch64LFIELFStreamer(Context, std::move(TAB), std::move(OW),
+                                  std::move(Emitter));
   return new AArch64ELFStreamer(Context, std::move(TAB), std::move(OW),
-                                std::move(Emitter));
-}
-
-MCStreamer *
-llvm::createAArch64LFIELFStreamer(const Triple &, MCContext &Context,
-                                  std::unique_ptr<MCAsmBackend> &&TAB,
-                                  std::unique_ptr<MCObjectWriter> &&OW,
-                                  std::unique_ptr<MCCodeEmitter> &&Emitter) {
-  return new AArch64LFIELFStreamer(Context, std::move(TAB), std::move(OW),
                                 std::move(Emitter));
 }

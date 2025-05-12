@@ -40,6 +40,7 @@ test_spmod:
 	add sp, sp, x0
 	sub sp, sp, x0
 	mov sp, x0
+	sub sp, sp, #1, lsl #12
 # CHECK-LABEL: <test_spmod>:
 # CHECK:       add x22, sp, #8
 # CHECK-NEXT:  add sp, x21, w22, uxtw
@@ -50,6 +51,8 @@ test_spmod:
 # CHECK-NEXT:  sub x22, sp, x0
 # CHECK-NEXT:  add sp, x21, w22, uxtw
 # CHECK-NEXT:  add sp, x21, w0, uxtw
+# CHECK-NEXT:  sub x22, sp, #1, lsl #12
+# CHECK-NEXT:  add sp, x21, w22, uxtw
 
 test_ramod:
 	mov x30, x29

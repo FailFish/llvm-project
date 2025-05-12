@@ -481,14 +481,18 @@ private:
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }
 
-  void emitRRI0(unsigned int Op, MCRegister Rd, MCRegister Rs, int64_t Imm, const MCSubtargetInfo &STI) {
+  void emitRRII(unsigned int Op, MCRegister Rd, MCRegister Rs, int64_t Imm, int64_t Imm2, const MCSubtargetInfo &STI) {
     MCInst SafeInst;
     SafeInst.setOpcode(Op);
     SafeInst.addOperand(MCOperand::createReg(Rd));
     SafeInst.addOperand(MCOperand::createReg(Rs));
     SafeInst.addOperand(MCOperand::createImm(Imm));
-    SafeInst.addOperand(MCOperand::createImm(0));
+    SafeInst.addOperand(MCOperand::createImm(Imm2));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitRRI0(unsigned int Op, MCRegister Rd, MCRegister Rs, int64_t Imm, const MCSubtargetInfo &STI) {
+    emitRRII(Op, Rd, Rs, Imm, 0, STI);
   }
 
   void emitRRR(unsigned int Op, MCRegister Rd, MCRegister Rs1, MCRegister Rs2, const MCSubtargetInfo &STI) {
@@ -664,7 +668,7 @@ public:
       if (Inst.getOperand(2).getImm() == 0) {
         emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       } else {
-        emitRRI(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getImm(), STI);
+        emitRRII(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getImm(), Inst.getOperand(3).getImm(), STI);
         emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       }
       return;
@@ -679,7 +683,7 @@ public:
       Reg = Inst.getOperand(0).getReg();
       if (Reg != AArch64::SP)
         break;
-      emitRRR(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getReg(), STI);
+      emitRRRI(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
       emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       return;
     case AArch64::ORRXrs:

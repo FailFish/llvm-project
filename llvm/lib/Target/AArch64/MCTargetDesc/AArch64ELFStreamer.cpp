@@ -2009,6 +2009,10 @@ private:
     return 0;
   }
 
+  bool isAddrReg(MCRegister Reg) {
+    return (Reg == AArch64::SP) || (Reg == AArch64::X18) || (Reg == AArch64::LR);
+  }
+
   void emitRRRI0(unsigned int Opcode, MCRegister Rd, MCRegister Rt1, MCRegister Rt2, int64_t Imm, const MCSubtargetInfo &STI) {
     MCInst SafeInst;
     SafeInst.setOpcode(Opcode);
@@ -2026,6 +2030,17 @@ private:
     SafeInst.addOperand(MCOperand::createReg(Rd));
     SafeInst.addOperand(MCOperand::createReg(Rt1));
     SafeInst.addOperand(MCOperand::createReg(Rt2));
+    SafeInst.addOperand(MCOperand::createImm(Imm));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+  void emitRRRRI(unsigned int Opcode, MCRegister Rd, MCRegister Rt1, MCRegister Rt2, MCRegister Rt3, int64_t Imm, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Opcode);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    SafeInst.addOperand(MCOperand::createReg(Rt1));
+    SafeInst.addOperand(MCOperand::createReg(Rt2));
+    SafeInst.addOperand(MCOperand::createReg(Rt3));
     SafeInst.addOperand(MCOperand::createImm(Imm));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }
@@ -2066,7 +2081,12 @@ private:
   }
 
   void emitMemMask(unsigned int Opcode, MCRegister Rd, MCRegister Rt, const MCSubtargetInfo &STI) {
-    emitRRRI0(Opcode, Rd, AArch64::X21, Rt, AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0), STI);
+    MCRegister SafeRd = Rd;
+    if (Rd == AArch64::LR)
+      SafeRd = AArch64::X22;
+    emitRRRI0(Opcode, SafeRd, AArch64::X21, Rt, AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0), STI);
+    if (Rd == AArch64::LR)
+      emitRRRI0(AArch64::ADDXrx, Rd, AArch64::X21, SafeRd, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitAddMask(MCRegister AddrReg, const MCSubtargetInfo &STI) {
@@ -2090,12 +2110,21 @@ private:
   void emitSafeMemN(unsigned N, const MCInst &Inst, const MCSubtargetInfo &STI) {
     MCInst SafeInst;
     SafeInst.setOpcode(Inst.getOpcode());
-    for (unsigned I = 0; I < N; I++)
-      SafeInst.addOperand(Inst.getOperand(I));
+    bool PostGuard = false;
+    for (unsigned I = 0; I < N; I++) {
+      if (Inst.getOperand(I).isReg() && Inst.getOperand(I).getReg() == AArch64::LR) {
+        PostGuard = true;
+        SafeInst.addOperand(MCOperand::createReg(AArch64::X22));
+      } else {
+        SafeInst.addOperand(Inst.getOperand(I));
+      }
+    }
     SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
     for (unsigned I = N + 1; I < Inst.getNumOperands(); I++)
       SafeInst.addOperand(Inst.getOperand(I));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+    if (PostGuard)
+      emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSafeMem1(const MCInst &Inst, const MCSubtargetInfo &STI) {
@@ -2107,7 +2136,7 @@ private:
   }
 
   void emitIndirectBranch(unsigned int Opcode, MCRegister Rt, const MCInst &Inst, const MCSubtargetInfo &STI) {
-    if (Rt == AArch64::LR) {
+    if (isAddrReg(Rt)) {
       AArch64ELFStreamer::emitInstruction(Inst, STI);
       return;
     }
@@ -2228,10 +2257,74 @@ public:
       return;
     case AArch64::ORRXrs:
       Reg = Inst.getOperand(0).getReg();
-      if (Reg != AArch64::SP)
-        break;
-      emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-      return;
+      if ((Reg == AArch64::SP) || (Reg == AArch64::LR)) {
+        emitRRRI0(AArch64::ADDXrx, Reg, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        return;
+      }
+      break;
+    case AArch64::LDRXui:
+      if (isAddrReg(Inst.getOperand(1).getReg()) && Inst.getOperand(0).getReg() == AArch64::LR) {
+        emitRRI(AArch64::LDRXui, AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), STI);
+        emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        return;
+      }
+      break;
+    case AArch64::LDRXpre:
+      if (isAddrReg(Inst.getOperand(2).getReg()) && Inst.getOperand(1).getReg() == AArch64::LR) {
+        emitRRRI(AArch64::LDRXpre, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
+        emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        return;
+      }
+      break;
+    case AArch64::LDRXpost:
+      if (isAddrReg(Inst.getOperand(2).getReg()) && Inst.getOperand(1).getReg() == AArch64::LR) {
+        emitRRRI(AArch64::LDRXpost, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
+        emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        return;
+      }
+      break;
+    case AArch64::LDPXi:
+      if (isAddrReg(Inst.getOperand(2).getReg())) {
+        if (Inst.getOperand(0).getReg() == AArch64::LR) {
+          emitRRRI(AArch64::LDPXi, AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
+          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          return;
+        }
+        if (Inst.getOperand(1).getReg() == AArch64::LR) {
+          emitRRRI0(AArch64::LDPXi, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
+          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          return;
+        }
+      }
+      break;
+    case AArch64::LDPXpre:
+      if (isAddrReg(Inst.getOperand(3).getReg())) {
+        if (Inst.getOperand(1).getReg() == AArch64::LR) {
+          emitRRRRI(AArch64::LDPXpre, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
+          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          return;
+        }
+        if (Inst.getOperand(2).getReg() == AArch64::LR) {
+          emitRRRRI(AArch64::LDPXpre, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), AArch64::X22, Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
+          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          return;
+        }
+      }
+      break;
+    case AArch64::LDPXpost:
+      if (isAddrReg(Inst.getOperand(3).getReg())) {
+        if (Inst.getOperand(1).getReg() == AArch64::LR) {
+          emitRRRRI(AArch64::LDPXpost, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
+          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          return;
+        }
+        if (Inst.getOperand(2).getReg() == AArch64::LR) {
+          emitRRRRI(AArch64::LDPXpost, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), AArch64::X22, Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
+          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          return;
+        }
+      }
+      break;
     }
 
     int DestRegIdx, BaseRegIdx, OffsetIdx;
@@ -2245,7 +2338,7 @@ public:
     }
 
     if (isMemNoMaskAddr(Inst.getOpcode())) {
-      if (Inst.getOperand(BaseRegIdx).getReg() == AArch64::SP) {
+      if (isAddrReg(Inst.getOperand(BaseRegIdx).getReg())) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
       }
@@ -2265,7 +2358,7 @@ public:
 
     unsigned MemOp;
     if ((MemOp = getMemSimple(Inst.getOpcode())) != AArch64::INSTRUCTION_LIST_END) {
-      if (Inst.getOperand(1).getReg() == AArch64::SP) {
+      if (isAddrReg(Inst.getOperand(1).getReg())) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
       }
@@ -2278,7 +2371,7 @@ public:
       return;
     }
     if ((MemOp = getMemPre(Inst.getOpcode())) != AArch64::INSTRUCTION_LIST_END) {
-      if (Inst.getOperand(2).getReg() == AArch64::SP) {
+      if (isAddrReg(Inst.getOperand(2).getReg())) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
       }
@@ -2289,7 +2382,7 @@ public:
       return;
     }
     if ((MemOp = getMemPost(Inst.getOpcode())) != AArch64::INSTRUCTION_LIST_END) {
-      if (Inst.getOperand(2).getReg() == AArch64::SP) {
+      if (isAddrReg(Inst.getOperand(2).getReg())) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
       }

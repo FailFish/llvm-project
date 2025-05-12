@@ -65,7 +65,7 @@ test_ramod:
 # CHECK-NEXT:  add x30, x21, w22, uxtw
 # CHECK-NEXT:  ldp x29, x22, [sp], #16
 # CHECK-NEXT:  add x30, x21, w22, uxtw
-# CHECK-NEXT:  ldp x30, x29, [sp], #16
+# CHECK-NEXT:  ldp x22, x29, [sp], #16
 # CHECK-NEXT:  add x30, x21, w22, uxtw
 
 test_norewrite:

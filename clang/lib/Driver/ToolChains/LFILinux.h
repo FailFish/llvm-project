@@ -19,7 +19,10 @@ class LLVM_LIBRARY_VISIBILITY LFILinuxToolChain : public Linux {
 public:
   LFILinuxToolChain(const Driver &D, const llvm::Triple &Triple,
                     const llvm::opt::ArgList &Args)
-      : Linux(D, Triple, Args) {}
+      : Linux(D, Triple, Args) {
+        ExtraOpts.push_back("-z");
+        ExtraOpts.push_back("separate-code");
+      }
 
   void
   AddCXXStdlibLibArgs(const llvm::opt::ArgList &Args,

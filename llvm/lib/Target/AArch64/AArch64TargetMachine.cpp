@@ -879,6 +879,11 @@ void AArch64PassConfig::addPreEmitPass() {
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableCollectLOH &&
       TM->getTargetTriple().isOSBinFormatMachO())
     addPass(createAArch64CollectLOHPass());
+
+  if (Triple(TM->getTargetTriple()).isVendorLFI()) {
+    addPass(createAArch64LFIPass());
+    addPass(&MachineLICMID);
+  }
 }
 
 void AArch64PassConfig::addPostBBSections() {

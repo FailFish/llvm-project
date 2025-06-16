@@ -8,8 +8,8 @@ using namespace llvm;
 
 namespace llvm {
 
-static inline bool getLoadInfo(const MCInst &Inst, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
-  switch (Inst.getOpcode()) {
+static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
+  switch (Opcode) {
   default:
     return false;
 
@@ -440,8 +440,8 @@ static inline bool getLoadInfo(const MCInst &Inst, int &DestRegIdx, int &BaseReg
   return true;
 }
 
-static inline bool getStoreInfo(const MCInst &Inst, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
-  switch (Inst.getOpcode()) {
+static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
+  switch (Opcode) {
   default:
     return false;
 
@@ -1504,6 +1504,19 @@ static inline unsigned convertUiToRoW(unsigned Op) {
     return AArch64::STRXroW;
   }
   return AArch64::INSTRUCTION_LIST_END;
+}
+
+static bool isMemNoMaskAddr(unsigned Op) {
+  unsigned Shift;
+  return convertUiToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&
+    convertPreToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&
+    convertPostToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&
+    convertRoXToRoW(Op, Shift) == AArch64::INSTRUCTION_LIST_END &&
+    convertRoWToRoW(Op, Shift) == AArch64::INSTRUCTION_LIST_END;
+}
+
+static bool isAddrReg(MCRegister Reg) {
+  return (Reg == AArch64::SP) || (Reg == AArch64::X18) || (Reg == AArch64::LR);
 }
 
 } // end namespace llvm

@@ -426,20 +426,6 @@ public:
   ~AArch64LFIELFStreamer() override = default;
 private:
   // TODO: handle cas,swp,...
-
-  bool isMemNoMaskAddr(unsigned Op) {
-    unsigned Shift;
-    return convertUiToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&
-      convertPreToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&
-      convertPostToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&
-      convertRoXToRoW(Op, Shift) == AArch64::INSTRUCTION_LIST_END &&
-      convertRoWToRoW(Op, Shift) == AArch64::INSTRUCTION_LIST_END;
-  }
-
-  bool isAddrReg(MCRegister Reg) {
-    return (Reg == AArch64::SP) || (Reg == AArch64::X18) || (Reg == AArch64::LR);
-  }
-
   void emitRRRI0(unsigned int Opcode, MCRegister Rd, MCRegister Rt1, MCRegister Rt2, int64_t Imm, const MCSubtargetInfo &STI) {
     MCInst SafeInst;
     SafeInst.setOpcode(Opcode);
@@ -760,8 +746,8 @@ public:
 
     int DestRegIdx, BaseRegIdx, OffsetIdx;
     bool IsPrePost;
-    if (!getLoadInfo(Inst, DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-      if (!getStoreInfo(Inst, DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
+    if (!getLoadInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
+      if (!getStoreInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
         // not load or store, so emit as is.
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;

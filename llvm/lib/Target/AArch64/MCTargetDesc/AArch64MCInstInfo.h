@@ -1506,6 +1506,27 @@ static inline unsigned convertUiToRoW(unsigned Op) {
   return AArch64::INSTRUCTION_LIST_END;
 }
 
+// Copied from AArch64InstrInfo.cpp
+static bool isPairedLdSt(unsigned Opcode) {
+  switch (Opcode) {
+  default:
+    return false;
+  case AArch64::LDPSi:
+  case AArch64::LDPSWi:
+  case AArch64::LDPDi:
+  case AArch64::LDPQi:
+  case AArch64::LDPWi:
+  case AArch64::LDPXi:
+  case AArch64::STPSi:
+  case AArch64::STPDi:
+  case AArch64::STPQi:
+  case AArch64::STPWi:
+  case AArch64::STPXi:
+  case AArch64::STGPi:
+    return true;
+  }
+}
+
 static bool isMemNoMaskAddr(unsigned Op) {
   unsigned Shift;
   return convertUiToRoW(Op) == AArch64::INSTRUCTION_LIST_END &&

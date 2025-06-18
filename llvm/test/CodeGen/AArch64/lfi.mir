@@ -1,6 +1,18 @@
-# RUN: llc -mtriple=aarch64 -run-pass=aarch64-lfi-pass %s -o - | FileCheck %s
+# RUN: llc -mtriple=aarch64 -run-pass=aarch64-lfi-pass -verify-machineinstrs %s -o - | FileCheck %s
 
 ---
+# CHECK-LABEL: name: test_br
+# CHECK: bb.0:
+# CHECK-NEXT: RET undef $lr, implicit killed $w0
+# CHECK: bb.1:
+# CHECK-NEXT: $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT: RET $x18
+# CHECK: bb.2:
+# CHECK-NEXT: $x18 = ADDXrx $x21, $w0, 16
+# CHECK-NEXT: BR $x18
+# CHECK: bb.3:
+# CHECK-NEXT: $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT: BLR $x18, implicit-def $lr, implicit $sp
 name: test_br
 body: |
   bb.0:
@@ -13,6 +25,22 @@ body: |
     BLR $x1
 ...
 ---
+# CHECK-LABEL: name: test_sys
+# CHECK: bb.0:
+# CHECK-NEXT: $x22 = ORRXrs $xzr, $lr, 0
+# CHECK-NEXT: $lr = LDRXui $x21, 0
+# CHECK-NEXT: BLR $lr, implicit-def $lr, implicit $sp
+# CHECK-NEXT: $lr = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = ORRXrs $xzr, $lr, 0
+# CHECK-NEXT: $lr = LDRXui $x21, 1
+# CHECK-NEXT: BLR $lr, implicit-def $lr, implicit $sp
+# CHECK-NEXT: $lr = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = ORRXrs $xzr, $lr, 0
+# CHECK-NEXT: $lr = LDRXui $x21, 2
+# CHECK-NEXT: BLR $lr, implicit-def $lr, implicit $sp
+# CHECK-NEXT: $lr = ADDXrx $x21, $w22, 16
 name: test_sys
 body: |
   bb.0:
@@ -21,6 +49,25 @@ body: |
     MSR 56962, $x0
 ...
 ---
+# CHECK-LABEL: name: test_spmod
+# CHECK:  bb.0:
+# CHECK-NEXT: $x22 = ADDXri $sp, 8, 0
+# CHECK-NEXT: $sp = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = SUBXri $sp, 8, 0
+# CHECK-NEXT: $sp = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = ADDXrx64 $sp, $x0, 0
+# CHECK-NEXT: $sp = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = SUBXrx64 $sp, $x0, 0
+# CHECK-NEXT: $sp = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = ADDXrx64 $sp, $x0, 0
+# CHECK-NEXT: $sp = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT: $x22 = SUBXri $sp, 4096, 0
+# CHECK-NEXT: $sp = ADDXrx $x21, $w22, 16
 name: test_spmod
 body: |
   bb.0:
@@ -30,7 +77,24 @@ body: |
     $sp = SUBXrx64 $sp, $x0, 0
     $sp = ADDXrx64 $sp, $x0, 0
     $sp = SUBXri $sp, 4096, 0
+...
 ---
+# CHECK-LABEL: name: test_ramod
+# CHECK:   bb.0:
+# CHECK-NEXT:     $lr = ADDXrx $x21, $wzr, 16
+# CHECK-NEXT:     $lr = ORRXrs $fp, $xzr, 0
+
+# CHECK-NEXT:     $x22 = LDRXui $sp, 0
+# CHECK-NEXT:     $lr = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT:     early-clobber $sp, $x22 = LDRXpost $sp, 8
+# CHECK-NEXT:     $lr = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT:     early-clobber $sp, $fp, $x22 = LDPXpost $sp, 8
+# CHECK-NEXT:     $lr = ADDXrx $x21, $w22, 16
+
+# CHECK-NEXT:     early-clobber $sp, $x22, $fp = LDPXpost $sp, 8
+# CHECK-NEXT:     $lr = ADDXrx $x21, $w22, 16
 name: test_ramod
 body: |
   bb.0:
@@ -39,13 +103,31 @@ body: |
     $sp, $lr = LDRXpost $sp, 8
     $sp, $fp, $lr = LDPXpost $sp, 8
     $sp, $lr, $fp = LDPXpost $sp, 8
+...
 ---
+# CHECK-LABEL: name: test_norewrite
+# CHECK:   bb.0:
+# CHECK-NEXT:     BR $x18
+
+# CHECK:   bb.1:
+# CHECK-NEXT:     BLR $x18
+# CHECK-NEXT:     BR $lr
+
+# CHECK:   bb.2:
+# CHECK-NEXT:     $x0 = LDRXui $x18, 0
+# CHECK-NEXT:     STRXui $x0, $x18, 0
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w0, 0
+# CHECK-NEXT:     $x0 = LDRXui $sp, 0
+# CHECK-NEXT:     $x0 = LDRXui $sp, 16
+# CHECK-NEXT:     early-clobber $sp, $x0 = LDRXpre $sp, 8
+# CHECK-NEXT:     early-clobber $sp, $x0 = LDRXpost $sp, 8
 name: test_norewrite
 body: |
   bb.0:
     BR $x18
   bb.1:
     BLR $x18
+    BR $lr
   bb.2:
     $x0 = LDRXui $x18, 0
     STRXui $x0, $x18, 0
@@ -54,7 +136,28 @@ body: |
     $x0 = LDRXui $sp, 16
     $sp, $x0 = LDRXpre $sp, 8
     $sp, $x0 = LDRXpost $sp, 8
+...
 ---
+# CHECK-LABEL: name: test_mem_basic
+# CHECK:   bb.0:
+# CHECK-NEXT:     $x0 = LDRXroW $x21, $w1, 4, 0
+
+# CHECK-NEXT:     STRXroW $x0, $x21, $w2, 4, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $x0 = LDRXui $x18, 16
+
+# CHECK-NEXT:     $x1 = ADDXri $x1, 16, 0
+# CHECK-NEXT:     $x0 = LDRXroW $x21, $w1, 4, 0
+
+# CHECK-NEXT:     $x0 = LDRXroW $x21, $w1, 4, 0
+# CHECK-NEXT:     $x1 = ADDXri $x1, 16, 0
+
+# CHECK-NEXT:     $x1 = SUBXri $x1, 8, 0
+# CHECK-NEXT:     $x0 = LDRXroW $x21, $w1, 4, 0
+
+# CHECK-NEXT:     $x0 = LDRXroW $x21, $w1, 4, 0
+# CHECK-NEXT:     $x1 = SUBXri $x1, 8, 0
 name: test_mem_basic
 body: |
   bb.0:
@@ -65,7 +168,39 @@ body: |
     $x1, $x0 = LDRXpost $x1, 16
     $x1, $x0 = LDRXpre $x1, -8
     $x1, $x0 = LDRXpost $x1, -8
+...
 ---
+# CHECK-LABEL: name: test_mem
+# CHECK:   bb.0:
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w8, 16
+# CHECK-NEXT:     $q0 = LD1i32 $q0, 1, $x18
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $q2 = LD1i64 $q2, 0, $x18
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $q2 = LD1i8 $q2, 0, $x18
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w9, 16
+# CHECK-NEXT:     $q2 = LD1Rv2d $x18
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $d2 = LD1Onev1d $x18
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $d2_d3 = LD1Twov1d $x18
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w8, 16
+# CHECK-NEXT:     $q0 = LD1i32 $q0, 1, $x18
+# CHECK-NEXT:     $x8 = ADDXrs $x8, $x10, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $q2 = LD1i8 $q2, 0, $x18
+# CHECK-NEXT:     $x1 = ADDXrs $x1, $x1, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w1, 16
+# CHECK-NEXT:     $d2 = LD1Rv1d $x18
+# CHECK-NEXT:     $x1 = ADDXrs $x1, $xzr, 0
 name: test_mem
 body: |
   bb.0:
@@ -78,7 +213,35 @@ body: |
     $x8, $q0 = LD1i32_POST $q0, 1, $x8, $x10
     $x1, $q2 = LD1i8_POST $q2, 0, $x1, $x1
     $x1, $d2 = LD1Rv1d_POST $x1, $xzr
+...
 ---
+# CHECK-LABEL: name: test_mem_pair
+# CHECK:   bb.0:
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT:     $x0, $x1 = LDPXi $x18, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT:     STPXi $x0, $x1, $x18, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT:     $x0, $x1 = LDPXi $x18, 16
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT:     $x0, $x1 = LDPXi $x18, 16
+
+# CHECK-NEXT:     $x2 = ADDXri $x2, 128, 0
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+
+# CHECK-NEXT:     $x0, $x1 = LDPXi $x18, 0
+# CHECK-NEXT:     $x2 = ADDXri $x2, 128, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT:     $w0, $w1 = LDPWi $x18, $x3
+# CHECK-NEXT:     $x2 = ADDXrs $x2, $x3, 0
+
+# CHECK-NEXT:     $x18 = ADDXrx $x21, $w2, 16
+# CHECK-NEXT:     $w0, $w1 = LDPWi $x18, 0
+# CHECK-NEXT:     $x2 = ADDXrs $x2, $x3, 0
 name: test_mem_pair
 body: |
   bb.0:

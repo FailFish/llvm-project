@@ -1,0 +1,95 @@
+# RUN: llc -mtriple=aarch64 -run-pass=aarch64-lfi-pass %s -o - | FileCheck %s
+
+---
+name: test_br
+body: |
+  bb.0:
+    RET undef $lr, implicit killed $w0
+  bb.1:
+    RET undef $x2, implicit killed $w0
+  bb.2:
+    BR $x0
+  bb.3:
+    BLR $x1
+...
+---
+name: test_sys
+body: |
+  bb.0:
+    SVC 0
+    $x0 = MRS 56962, implicit-def $nzcv
+    MSR 56962, $x0
+...
+---
+name: test_spmod
+body: |
+  bb.0:
+    $sp = ADDXri $sp, 8, 0
+    $sp = SUBXri $sp, 8, 0
+    $sp = ADDXrx64 $sp, $x0, 0
+    $sp = SUBXrx64 $sp, $x0, 0
+    $sp = ADDXrx64 $sp, $x0, 0
+    $sp = SUBXri $sp, 4096, 0
+---
+name: test_ramod
+body: |
+  bb.0:
+    $lr = ORRXrs $fp, $xzr, 0
+    $lr = LDRXui $sp, 0
+    $sp, $lr = LDRXpost $sp, 8
+    $sp, $fp, $lr = LDPXpost $sp, 8
+    $sp, $lr, $fp = LDPXpost $sp, 8
+---
+name: test_norewrite
+body: |
+  bb.0:
+    BR $x18
+  bb.1:
+    BLR $x18
+  bb.2:
+    $x0 = LDRXui $x18, 0
+    STRXui $x0, $x18, 0
+    $x18 = ADDXrx $x21, $w0, 0
+    $x0 = LDRXui $sp, 0
+    $x0 = LDRXui $sp, 16
+    $sp, $x0 = LDRXpre $sp, 8
+    $sp, $x0 = LDRXpost $sp, 8
+---
+name: test_mem_basic
+body: |
+  bb.0:
+    $x0 = LDRXui $x1, 0
+    STRXui $x0, $x2, 0
+    $x0 = LDRXui $x1, 16
+    $x1, $x0 = LDRXpre $x1, 16
+    $x1, $x0 = LDRXpost $x1, 16
+    $x1, $x0 = LDRXpre $x1, -8
+    $x1, $x0 = LDRXpost $x1, -8
+---
+name: test_mem
+body: |
+  bb.0:
+    $q0 = LD1i32 $q0, 1, $x8
+    $q2 = LD1i64 $q2, 0, $x1
+    $q2 = LD1i8 $q2, 0, $x1
+    $q2 = LD1Rv2d $x9
+    $d2 = LD1Onev1d $x1
+    $d2_d3 = LD1Twov1d $x1
+    $x8, $q0 = LD1i32_POST $q0, 1, $x8, $x10
+    $x1, $q2 = LD1i8_POST $q2, 0, $x1, $x1
+    $x1, $d2 = LD1Rv1d_POST $x1, $xzr
+---
+name: test_mem_pair
+body: |
+  bb.0:
+    $x0, $x1 = LDPXi $x2, 0
+    STPXi $x0, $x1, $x2, 0
+    $x0, $x1 = LDPXi $x2, 16
+    $x2, $x0, $x1 = LDPXpre $x2, 16
+    $x2, $x0, $x1 = LDPXpost $x2, 16
+    $x2, $w0, $w1 = LDPWpre $x2, $x3
+    $x2, $w0, $w1 = LDPWpost $x2, $x3
+    ; COM: $x0, $x1 = LDAXPX $x2
+    ; COM: $x0, $x1 = LDXPX $x2
+    ; COM: $w0 = STXPX $x1, $x2, $x3
+    ; COM: $w0 = STLXPX $x1, $x2, $x3

@@ -425,6 +425,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
     DestRegIdx = -1;
     BaseRegIdx = 1;
     OffsetIdx = -1;
+    IsPrePost = false;
     break;
 
   case AArch64::LDXPW:
@@ -434,6 +435,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
     DestRegIdx = -1;
     BaseRegIdx = 2;
     OffsetIdx = -1;
+    IsPrePost = false;
     break;
   }
 
@@ -546,6 +548,7 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
     IsPrePost = true;
     break;
 
+  // SIMDStSingleS
   case AArch64::ST1i8_POST:
   case AArch64::ST1i16_POST:
   case AArch64::ST1i32_POST:
@@ -561,8 +564,8 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
   case AArch64::ST4i32_POST:
   case AArch64::ST4i64_POST:
     DestRegIdx = -1;
-    BaseRegIdx = 4;
-    OffsetIdx = 5;
+    BaseRegIdx = 3;
+    OffsetIdx = 4;
     IsPrePost = true;
     break;
 
@@ -750,6 +753,7 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
     DestRegIdx = -1;
     BaseRegIdx = 2;
     OffsetIdx = -1;
+    IsPrePost = false;
     break;
 
   case AArch64::STXPW:
@@ -759,6 +763,7 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
     DestRegIdx = -1;
     BaseRegIdx = 3;
     OffsetIdx = -1;
+    IsPrePost = false;
     break;
   }
 

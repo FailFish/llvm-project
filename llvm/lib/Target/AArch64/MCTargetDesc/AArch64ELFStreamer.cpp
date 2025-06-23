@@ -40,10 +40,15 @@
 #include "llvm/MC/MCWinCOFFStreamer.h"
 #include "llvm/Support/AArch64BuildAttributes.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+
+static cl::opt<bool> ClEnableAArch64LFIELFStreamer(
+    "enable-aarch64-lfi-elf-streamer", cl::Hidden, cl::init(false),
+    cl::desc("disable LFI ELF Streamer"));
 
 namespace {
 
@@ -999,7 +1004,7 @@ llvm::createAArch64ELFStreamer(const Triple &TheTriple, MCContext &Context,
                                std::unique_ptr<MCAsmBackend> &&TAB,
                                std::unique_ptr<MCObjectWriter> &&OW,
                                std::unique_ptr<MCCodeEmitter> &&Emitter) {
-  if (TheTriple.isVendorLFI())
+  if (ClEnableAArch64LFIELFStreamer && TheTriple.isVendorLFI())
     return new AArch64LFIELFStreamer(Context, std::move(TAB), std::move(OW),
                                   std::move(Emitter));
   return new AArch64ELFStreamer(Context, std::move(TAB), std::move(OW),

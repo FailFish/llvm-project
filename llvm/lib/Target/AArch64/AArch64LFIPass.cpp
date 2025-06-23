@@ -19,6 +19,10 @@
 
 using namespace llvm;
 
+static cl::opt<bool> ClDisableLFI(
+    "disable-lfi-pass", cl::Hidden, cl::init(false),
+    cl::desc("disable LFI MIR pass"));
+
 namespace {
 class AArch64LFI : public MachineFunctionPass {
   const AArch64InstrInfo *TII;
@@ -40,6 +44,7 @@ private:
   bool handleLoadStore(MachineInstr &MI);
   SmallVector<MachineInstr *, 4> createRTCall(RTCallType Ty, MachineInstr &MI);
   SmallVector<MachineInstr *, 3> createSwap(MachineInstr &MI, Register R1, Register R2);
+  MachineInstr *createMov(MachineInstr &MI, Register DestReg, Register BaseReg);
   MachineInstr *createAddXrx(MachineInstr &MI, Register DestReg, Register BaseReg, Register OffsetReg);
   MachineInstr *createAddFromBase(MachineInstr &MI, Register DestReg, Register OffsetReg);
   MachineInstr *createLoadTemp(MachineInstr &MI);
@@ -114,7 +119,6 @@ MachineInstr *AArch64LFI::createLoadTemp(MachineInstr &MI) {
         MI.dump(););
     return nullptr;
   }
-  assert(MI.getOperand(OffsetIdx).isImm());
 
   bool IsPair = DestRegIdx + 2 == BaseRegIdx; // WARN:
 
@@ -140,7 +144,7 @@ MachineInstr *AArch64LFI::createLoadTemp(MachineInstr &MI) {
     return nullptr;
 
   MIB.addReg(MI.getOperand(BaseRegIdx).getReg());
-  MIB.addImm(MI.getOperand(OffsetIdx).getImm());
+  MIB.add(MI.getOperand(OffsetIdx));
 
   return MIB;
 }
@@ -207,20 +211,28 @@ SmallVector<MachineInstr *, 2> AArch64LFI::createMemMask(MachineInstr &MI, unsig
 }
 
 SmallVector<MachineInstr *, 3> AArch64LFI::createSwap(MachineInstr &MI, Register R1, Register R2) {
-  MachineInstr *Swap1 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs))
+  MachineInstr *Swap1 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs), R1)
     .addReg(R1)
-    .addReg(R1)
-    .addReg(R2);
-  MachineInstr *Swap2 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs))
+    .addReg(R2)
+    .addImm(0);
+  MachineInstr *Swap2 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs), R2)
     .addReg(R2)
     .addReg(R1)
-    .addReg(R2);
-  MachineInstr *Swap3 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs))
+    .addReg(R2)
+    .addImm(0);
+  MachineInstr *Swap3 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs), R1)
     .addReg(R1)
-    .addReg(R1)
-    .addReg(R2);
+    .addReg(R2)
+    .addImm(0);
 
   return {Swap1, Swap2, Swap3};
+}
+
+MachineInstr *AArch64LFI::createMov(MachineInstr &MI, Register DestReg, Register BaseReg) {
+  return BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ORRXrs), DestReg)
+    .addReg(AArch64::XZR)
+    .addReg(BaseReg)
+    .addImm(0);
 }
 
 bool AArch64LFI::handleWriteX30(MachineInstr &MI) {
@@ -236,10 +248,7 @@ bool AArch64LFI::handleWriteX30(MachineInstr &MI) {
 }
 
 SmallVector<MachineInstr *, 4> AArch64LFI::createRTCall(RTCallType Ty, MachineInstr &MI) {
-  MachineInstr *Mov = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ORRXrs), AArch64::X22)
-    .addReg(AArch64::XZR)
-    .addReg(AArch64::LR)
-    .addImm(0);
+  MachineInstr *Mov = createMov(MI, AArch64::X22, AArch64::LR);
 
   auto Offset = 0;
   switch (Ty) {
@@ -267,7 +276,7 @@ bool AArch64LFI::handleTLSWrite(MachineInstr &MI) {
   SmallVector<MachineInstr *> Instrs;
 
   if (Reg != AArch64::X0) {
-    Instrs.append(createSwap(MI, Reg, AArch64::X0));
+    Instrs.push_back(createMov(MI, Reg, AArch64::X0));
   }
 
   auto CallSeq = createRTCall(RTCallType::RT_TLSWrite, MI);
@@ -387,11 +396,12 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
     Register BaseReg = MI.getOperand(BaseRegIdx).getReg();
     Register DestReg = MI.getOperand(DestRegIdx).getReg();
     bool IsDestDef = MI.getOperand(DestRegIdx).isDef();
-    int64_t Offset = MI.getOperand(OffsetIdx).getImm();
+    MachineOperand OffsetMO = MI.getOperand(OffsetIdx);
     if (isAddrReg(BaseReg))
       return false;
 
-    if (Offset == 0) {
+    // NOTE: ADRP + LDR has a global variable as MO.
+    if (OffsetMO.isImm() && OffsetMO.getImm() == 0) {
       auto MaskChain = createMemMask(MI, MemOp, DestReg, BaseReg, IsDestDef);
       Instrs.append(MaskChain);
     } else {
@@ -469,7 +479,7 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
             .addReg(OffsetReg) // FIXME: WReg
             .addImm(
                 Extend ? AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift)
-                       : AArch64_AM::getArithExtendImm(AArch64_AM::LSL, Shift));
+                       : AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift));
     Instrs.push_back(Fixup);
     auto MaskChain = createMemMask(MI, MemOp, DestReg, AArch64::X22, IsDestDef);
     Instrs.append(MaskChain);

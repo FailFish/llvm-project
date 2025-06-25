@@ -331,9 +331,11 @@ bool AArch64LFI::handleIndBr(MachineInstr &MI) {
   }
 
   MachineInstr *MaskMI = createAddFromBase(MI, AArch64::X18, Reg);
-  MachineInstr *NewIndBr =
+  MachineInstrBuilder NewIndBr =
     BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
     .addReg(AArch64::X18);
+  if (MI.getOpcode() == AArch64::TCRETURNri)
+    NewIndBr.addImm(0);
 
   insertMIs(MI, {MaskMI, NewIndBr});
 
@@ -476,7 +478,7 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
         BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
             .addReg(AArch64::X22)
             .addReg(BaseReg)
-            .addReg(OffsetReg) // FIXME: WReg
+            .addReg(OffsetReg)
             .addImm(
                 Extend ? AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift)
                        : AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift));
@@ -517,6 +519,14 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
   Register Reg;
   // TODO: need to check fallthrough
   switch (MI.getOpcode()) {
+    // NOTE: TailCall with a register operand.
+    case AArch64::TCRETURNri:
+    // case AArch64::TCRETURNrix16x17:
+    // case AArch64::TCRETURNrix17:
+    // case AArch64::TCRETURNrinotx16:
+    // case AArch64::TCRETURNriALL:
+    // case AArch64::AUTH_TCRETURN:
+    // case AArch64::AUTH_TCRETURN_BTI:
     case AArch64::BR:
     case AArch64::BLR:
     case AArch64::RET:

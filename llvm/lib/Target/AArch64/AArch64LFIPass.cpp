@@ -159,7 +159,9 @@ MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRe
   MIB.addReg(AArch64::X18);
   if (IsPre)
     MIB.add(MI.getOperand(BaseRegIdx + 1));
-  else if (isPairedLdSt(NewOpCode)) // CHECK: MCInst never had this
+  else if (BaseRegIdx < MIB->getDesc().getNumOperands())
+    // NOTE: some SIMD opcodes only have no-offset mode and Post-index mode with (imm|reg)
+    // so this adds an offset 0 only if its base opcode needs an offset.
     MIB.addImm(0);
 
   return MIB;
@@ -370,20 +372,28 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
       MachineInstr *SafeMem = createSafeMemDemoted(MI, BaseRegIdx);
       Instrs.push_back(SafeMem);
 
-      MachineInstr *Add;
+      MachineInstr *Fixup;
+      // NOTE: may add 
       if (MI.getOperand(OffsetIdx).isReg()) {
-        Add = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrs), BaseReg)
+        Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrs), BaseReg)
           .addReg(BaseReg)
           .addReg(MI.getOperand(OffsetIdx).getReg())
           .addImm(0);
       } else {
         auto Offset = MI.getOperand(OffsetIdx).getImm() * getPrePostScale(MI.getOpcode());
-        Add = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXri), BaseReg)
-          .addReg(BaseReg)
-          .addImm(Offset)
-          .addImm(0);
+        if (Offset >= 0) {
+          Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXri), BaseReg)
+            .addReg(BaseReg)
+            .addImm(Offset)
+            .addImm(0);
+        } else {
+          Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::SUBXri), BaseReg)
+            .addReg(BaseReg)
+            .addImm(-Offset)
+            .addImm(0);
+        }
       }
-      Instrs.push_back(Add);
+      Instrs.push_back(Fixup);
     } else {
       Instrs.append(createSafeMemN(MI, BaseRegIdx));
     }

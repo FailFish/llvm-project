@@ -47,7 +47,7 @@
 using namespace llvm;
 
 static cl::opt<bool> ClEnableAArch64LFIELFStreamer(
-    "enable-aarch64-lfi-elf-streamer", cl::Hidden, cl::init(false),
+    "disable-aarch64-lfi-elf-streamer", cl::Hidden, cl::init(true),
     cl::desc("disable LFI ELF Streamer"));
 
 namespace {

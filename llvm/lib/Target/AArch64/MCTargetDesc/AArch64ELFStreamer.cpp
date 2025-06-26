@@ -641,13 +641,13 @@ public:
       emitSyscall(STI);
       return;
     case AArch64::MRS:
-      if (Inst.getOperand(1).getReg() == AArch64SysReg::TPIDR_EL0) {
+      if (Inst.getOperand(1).getImm() == AArch64SysReg::TPIDR_EL0) {
         emitTLSRead(Inst, STI);
         return;
       }
       break;
     case AArch64::MSR:
-      if (Inst.getOperand(0).getReg() == AArch64SysReg::TPIDR_EL0) {
+      if (Inst.getOperand(0).getImm() == AArch64SysReg::TPIDR_EL0) {
         emitTLSWrite(Inst, STI);
         return;
       }

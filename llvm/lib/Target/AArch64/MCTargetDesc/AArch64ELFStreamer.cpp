@@ -517,14 +517,15 @@ private:
 
   void emitSafeMemDemoted(unsigned N, const MCInst &Inst, const MCSubtargetInfo &STI) {
     MCInst SafeInst;
-    bool IsPre;
-    SafeInst.setOpcode(convertPrePostToBase(Inst.getOpcode(), IsPre));
+    bool IsPre, IsBaseNoOffset;
+    auto NewOpCode = convertPrePostToBase(Inst.getOpcode(), IsPre, IsBaseNoOffset);
+    SafeInst.setOpcode(NewOpCode);
     for (unsigned I = 1; I < N; I++)
       SafeInst.addOperand(Inst.getOperand(I));
     SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
     if (IsPre)
       SafeInst.addOperand(Inst.getOperand(N + 1));
-    else
+    else if (!IsBaseNoOffset)
       SafeInst.addOperand(MCOperand::createImm(0));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }

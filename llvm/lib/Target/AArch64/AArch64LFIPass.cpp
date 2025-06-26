@@ -150,8 +150,8 @@ MachineInstr *AArch64LFI::createLoadTemp(MachineInstr &MI) {
 }
 
 MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRegIdx) {
-  bool IsPre;
-  auto NewOpCode = convertPrePostToBase(MI.getOpcode(), IsPre);
+  bool IsPre, IsBaseNoOffset;
+  auto NewOpCode = convertPrePostToBase(MI.getOpcode(), IsPre, IsBaseNoOffset);
   MachineInstrBuilder MIB = BuildMI(*MF, MI.getDebugLoc(), TII->get(NewOpCode));
 
   for (unsigned I = 1; I < BaseRegIdx; I++)
@@ -159,7 +159,7 @@ MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRe
   MIB.addReg(AArch64::X18);
   if (IsPre)
     MIB.add(MI.getOperand(BaseRegIdx + 1));
-  else if (BaseRegIdx < MIB->getDesc().getNumOperands())
+  else if (!IsBaseNoOffset)
     // NOTE: some SIMD opcodes only have no-offset mode and Post-index mode with (imm|reg)
     // so this adds an offset 0 only if its base opcode needs an offset.
     MIB.addImm(0);

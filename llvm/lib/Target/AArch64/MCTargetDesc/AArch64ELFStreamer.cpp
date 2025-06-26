@@ -768,10 +768,15 @@ public:
       if (IsPrePost) {
         emitSafeMemDemoted(BaseRegIdx, Inst, STI);
         MCRegister Base = Inst.getOperand(BaseRegIdx).getReg();
-        if (Inst.getOperand(OffsetIdx).isReg())
-          emitRRRI(AArch64::ADDXrs, Base, Base, Inst.getOperand(OffsetIdx).getReg(), 0, STI); // TODO: bug?
-        else
-          emitRRI0(AArch64::ADDXri, Base, Base, Inst.getOperand(OffsetIdx).getImm() * getPrePostScale(Inst.getOpcode()), STI);
+        if (Inst.getOperand(OffsetIdx).isReg()) {
+          emitRRRI(AArch64::ADDXrs, Base, Base, Inst.getOperand(OffsetIdx).getReg(), 0, STI);
+        } else {
+          auto Offset = Inst.getOperand(OffsetIdx).getImm() * getPrePostScale(Inst.getOpcode());
+          if (Offset >= 0)
+            emitRRI0(AArch64::ADDXri, Base, Base, Offset, STI);
+          else
+            emitRRI0(AArch64::SUBXri, Base, Base, -Offset, STI);
+        }
       } else {
         emitSafeMemN(BaseRegIdx, Inst, STI);
       }
@@ -784,7 +789,8 @@ public:
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
       }
-      if (Inst.getOperand(2).getImm() == 0) {
+      auto OffsetMCO = Inst.getOperand(2);
+      if (OffsetMCO.isImm() && OffsetMCO.getImm() == 0) {
         emitMemMask(MemOp, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), STI);
       } else {
         emitAddMask(Inst.getOperand(1).getReg(), STI);

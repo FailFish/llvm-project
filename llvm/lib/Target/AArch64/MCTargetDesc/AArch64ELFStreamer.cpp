@@ -508,11 +508,11 @@ private:
       SafeRd = AArch64::X22;
     emitRRRI0(Opcode, SafeRd, AArch64::X21, Rt, AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0), STI);
     if (Rd == AArch64::LR)
-      emitRRRI0(AArch64::ADDXrx, Rd, AArch64::X21, SafeRd, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      emitRRRI(AArch64::ADDXrx, Rd, AArch64::X21, SafeRd, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitAddMask(MCRegister AddrReg, const MCSubtargetInfo &STI) {
-    emitRRRI0(AArch64::ADDXrx, AArch64::X18, AArch64::X21, AddrReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    emitRRRI(AArch64::ADDXrx, AArch64::X18, AArch64::X21, AddrReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSafeMemDemoted(unsigned N, const MCInst &Inst, const MCSubtargetInfo &STI) {
@@ -546,7 +546,7 @@ private:
       SafeInst.addOperand(Inst.getOperand(I));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
     if (PostGuard)
-      emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSafeMem1(const MCInst &Inst, const MCSubtargetInfo &STI) {
@@ -589,7 +589,7 @@ private:
     }
     emitRRI(AArch64::LDRXui, AArch64::LR, AArch64::X21, Offset, STI);
     emitR(AArch64::BLR, AArch64::LR, STI);
-    emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSyscall(const MCSubtargetInfo &STI) {
@@ -657,10 +657,10 @@ public:
       if (Reg != AArch64::SP)
         break;
       if (Inst.getOperand(2).getImm() == 0) {
-        emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       } else {
         emitRRII(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getImm(), Inst.getOperand(3).getImm(), STI);
-        emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       }
       return;
     case AArch64::ADDXrr:
@@ -675,33 +675,33 @@ public:
       if (Reg != AArch64::SP)
         break;
       emitRRRI(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-      emitRRRI0(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       return;
     case AArch64::ORRXrs:
       Reg = Inst.getOperand(0).getReg();
       if ((Reg == AArch64::SP) || (Reg == AArch64::LR)) {
-        emitRRRI0(AArch64::ADDXrx, Reg, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, Reg, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
     case AArch64::LDRXui:
       if (isAddrReg(Inst.getOperand(1).getReg()) && Inst.getOperand(0).getReg() == AArch64::LR) {
         emitRRI(AArch64::LDRXui, AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), STI);
-        emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
     case AArch64::LDRXpre:
       if (isAddrReg(Inst.getOperand(2).getReg()) && Inst.getOperand(1).getReg() == AArch64::LR) {
         emitRRRI(AArch64::LDRXpre, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-        emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
     case AArch64::LDRXpost:
       if (isAddrReg(Inst.getOperand(2).getReg()) && Inst.getOperand(1).getReg() == AArch64::LR) {
         emitRRRI(AArch64::LDRXpost, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-        emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
@@ -714,7 +714,7 @@ public:
         }
         if (Inst.getOperand(1).getReg() == AArch64::LR) {
           emitRRRI0(AArch64::LDPXi, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
           return;
         }
       }
@@ -723,12 +723,12 @@ public:
       if (isAddrReg(Inst.getOperand(3).getReg())) {
         if (Inst.getOperand(1).getReg() == AArch64::LR) {
           emitRRRRI(AArch64::LDPXpre, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
           return;
         }
         if (Inst.getOperand(2).getReg() == AArch64::LR) {
           emitRRRRI(AArch64::LDPXpre, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), AArch64::X22, Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
           return;
         }
       }
@@ -737,12 +737,12 @@ public:
       if (isAddrReg(Inst.getOperand(3).getReg())) {
         if (Inst.getOperand(1).getReg() == AArch64::LR) {
           emitRRRRI(AArch64::LDPXpost, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
           return;
         }
         if (Inst.getOperand(2).getReg() == AArch64::LR) {
           emitRRRRI(AArch64::LDPXpost, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), AArch64::X22, Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI0(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
           return;
         }
       }
@@ -769,7 +769,7 @@ public:
         emitSafeMemDemoted(BaseRegIdx, Inst, STI);
         MCRegister Base = Inst.getOperand(BaseRegIdx).getReg();
         if (Inst.getOperand(OffsetIdx).isReg())
-          emitRRRI0(AArch64::ADDXrs, Base, Base, Inst.getOperand(OffsetIdx).getReg(), 0, STI);
+          emitRRRI(AArch64::ADDXrs, Base, Base, Inst.getOperand(OffsetIdx).getReg(), 0, STI); // TODO: bug?
         else
           emitRRI0(AArch64::ADDXri, Base, Base, Inst.getOperand(OffsetIdx).getImm() * getPrePostScale(Inst.getOpcode()), STI);
       } else {
@@ -829,9 +829,9 @@ public:
       if (!IsShift)
         Shift = 0;
       if (Extend)
-        emitRRRI0(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift), STI);
       else
-        emitRRRI0(AArch64::ADDXrs, AArch64::X22, Reg1, Reg2, AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift), STI);
+        emitRRRI(AArch64::ADDXrs, AArch64::X22, Reg1, Reg2, AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift), STI);
       emitMemMask(MemOp, Inst.getOperand(0).getReg(), AArch64::X22, STI);
       return;
     }
@@ -843,9 +843,9 @@ public:
       if (!IsShift)
         Shift = 0;
       if (S)
-        emitRRRI0(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTW, Shift), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTW, Shift), STI);
       else
-        emitRRRI0(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, Shift), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, Shift), STI);
       emitMemMask(MemOp, Inst.getOperand(0).getReg(), AArch64::X22, STI);
       return;
     }

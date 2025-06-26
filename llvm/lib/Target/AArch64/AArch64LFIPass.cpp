@@ -218,7 +218,6 @@ SmallVector<MachineInstr *, 3> AArch64LFI::createSwap(MachineInstr &MI, Register
     .addReg(R2)
     .addImm(0);
   MachineInstr *Swap2 = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::EORXrs), R2)
-    .addReg(R2)
     .addReg(R1)
     .addReg(R2)
     .addImm(0);
@@ -278,7 +277,7 @@ bool AArch64LFI::handleTLSWrite(MachineInstr &MI) {
   SmallVector<MachineInstr *> Instrs;
 
   if (Reg != AArch64::X0) {
-    Instrs.push_back(createMov(MI, Reg, AArch64::X0));
+    Instrs.append(createSwap(MI, Reg, AArch64::X0));
   }
 
   auto CallSeq = createRTCall(RTCallType::RT_TLSWrite, MI);
@@ -299,7 +298,7 @@ bool AArch64LFI::handleTLSRead(MachineInstr &MI) {
   SmallVector<MachineInstr *> Instrs;
 
   if (Reg != AArch64::X0) {
-    Instrs.append(createSwap(MI, Reg, AArch64::X0));
+    Instrs.push_back(createMov(MI, Reg, AArch64::X0));
   }
 
   auto CallSeq = createRTCall(RTCallType::RT_TLSRead, MI);
@@ -373,7 +372,6 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
       Instrs.push_back(SafeMem);
 
       MachineInstr *Fixup;
-      // NOTE: may add 
       if (MI.getOperand(OffsetIdx).isReg()) {
         Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrs), BaseReg)
           .addReg(BaseReg)
@@ -527,10 +525,9 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
   LLVM_DEBUG(DBGLOC; MI.dump(););
   bool Changed = false;
   Register Reg;
-  // TODO: need to check fallthrough
   switch (MI.getOpcode()) {
-    // NOTE: TailCall with a register operand.
     case AArch64::TCRETURNri:
+    // NOTE: tailcall instrs below will be expanded by AArch64LFIELFStreamer.
     // case AArch64::TCRETURNrix16x17:
     // case AArch64::TCRETURNrix17:
     // case AArch64::TCRETURNrinotx16:
@@ -635,6 +632,7 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
         Changed |= handleLoadStore(MI);
         break;
       }
+      // WARN: this may be too restrictive with a secondary rewriter.
       if (MI.isIndirectBranch())
         llvm_unreachable_internal("missed AArch64 Indirect Branch Instr");
       LLVM_DEBUG(DBGLOC << "Skipping MachineInstr -- "; MI.dump(););

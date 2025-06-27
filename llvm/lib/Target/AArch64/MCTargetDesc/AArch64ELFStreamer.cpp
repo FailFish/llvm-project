@@ -788,13 +788,15 @@ public:
       break;
     }
 
-    int DestRegIdx, BaseRegIdx, OffsetIdx;
-    bool IsPrePost;
+    int DestRegIdx, BaseRegIdx, OffsetIdx = -1;
+    bool IsPrePost = false;
     if (!getLoadInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
       if (!getStoreInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-        // not load or store, so emit as is.
-        AArch64ELFStreamer::emitInstruction(Inst, STI);
-        return;
+        if (!getAtomicLdStInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx)) {
+          // not load or store, so emit as is.
+          AArch64ELFStreamer::emitInstruction(Inst, STI);
+          return;
+        }
       }
     }
 
@@ -805,6 +807,7 @@ public:
       }
       emitAddMask(Inst.getOperand(BaseRegIdx).getReg(), STI);
       if (IsPrePost) {
+        assert(OffsetIdx != -1 && "Unexpected Offset index(-1) with pre/post-index mode");
         emitSafeMemDemoted(BaseRegIdx, Inst, STI);
         MCRegister Base = Inst.getOperand(BaseRegIdx).getReg();
         if (Inst.getOperand(OffsetIdx).isReg()) {

@@ -8,6 +8,150 @@ using namespace llvm;
 
 namespace llvm {
 
+static bool getAtomicLdStInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx) {
+  // (ST|LD)OPRegister: ld*, st*
+  // CompareAndSwap(Pair)?(Unprvileged)?
+  // Swap(LSUI)?
+  // StoreRelease
+  // LoadAcquire
+  switch (Opcode) {
+    // Compare-and-swap CAS(A)?(L)?(B|H|W|X)
+    // MIR: Rs = op Rs, Rt, [Xn]
+    case AArch64::CASB:
+    case AArch64::CASH:
+    case AArch64::CASW:
+    case AArch64::CASX:
+    case AArch64::CASAB:
+    case AArch64::CASAH:
+    case AArch64::CASAW:
+    case AArch64::CASAX:
+    case AArch64::CASALB:
+    case AArch64::CASALH:
+    case AArch64::CASALW:
+    case AArch64::CASALX:
+    case AArch64::CASLB:
+    case AArch64::CASLH:
+    case AArch64::CASLW:
+    case AArch64::CASLX:
+      DestRegIdx = 2;
+      BaseRegIdx = 3;
+      break;
+    // rs1_rs2 = op rs1_rs2, rt1_rt2, [Xn]
+    // case AArch64::CASPW:
+    // case AArch64::CASPX:
+    // case AArch64::CASPAW:
+    // case AArch64::CASPAX:
+    // case AArch64::CASPALW:
+    // case AArch64::CASPALX:
+    // case AArch64::CASPLW:
+    // case AArch64::CASPLX:
+    //   break;
+    // swap SWP(A)?(L)?(B|H|W|X)
+    // MIR: op Rs, Rt, [Xn]
+    case AArch64::SWPB:
+    case AArch64::SWPH:
+    case AArch64::SWPW:
+    case AArch64::SWPX:
+    case AArch64::SWPAB:
+    case AArch64::SWPAH:
+    case AArch64::SWPAW:
+    case AArch64::SWPAX:
+    case AArch64::SWPALB:
+    case AArch64::SWPALH:
+    case AArch64::SWPALW:
+    case AArch64::SWPALX:
+    case AArch64::SWPLB:
+    case AArch64::SWPLH:
+    case AArch64::SWPLW:
+    case AArch64::SWPLX:
+      DestRegIdx = 1;
+      BaseRegIdx = 2;
+      break;
+    // LD(ADD|CLR|EOR|SET)(A)?(L)?(B|H|W|X)
+    // op Rs, Rt, [Xn]
+    // if Rt == xzr, LD* aliases to ST*
+    case AArch64::LDADDB:
+    case AArch64::LDADDH:
+    case AArch64::LDADDX:
+    case AArch64::LDADDW:
+    case AArch64::LDADDAB:
+    case AArch64::LDADDAH:
+    case AArch64::LDADDAW:
+    case AArch64::LDADDAX:
+    case AArch64::LDADDALB:
+    case AArch64::LDADDALH:
+    case AArch64::LDADDALW:
+    case AArch64::LDADDALX:
+    case AArch64::LDADDLB:
+    case AArch64::LDADDLH:
+    case AArch64::LDADDLX:
+    case AArch64::LDADDLW:
+      DestRegIdx = 1;
+      BaseRegIdx = 2;
+      break;
+    case AArch64::LDCLRB:
+    case AArch64::LDCLRH:
+    case AArch64::LDCLRX:
+    case AArch64::LDCLRW:
+    case AArch64::LDCLRAB:
+    case AArch64::LDCLRAH:
+    case AArch64::LDCLRAW:
+    case AArch64::LDCLRAX:
+    case AArch64::LDCLRALB:
+    case AArch64::LDCLRALH:
+    case AArch64::LDCLRALW:
+    case AArch64::LDCLRALX:
+    case AArch64::LDCLRLB:
+    case AArch64::LDCLRLH:
+    case AArch64::LDCLRLX:
+    case AArch64::LDCLRLW:
+      DestRegIdx = 1;
+      BaseRegIdx = 2;
+      break;
+    case AArch64::LDEORB:
+    case AArch64::LDEORH:
+    case AArch64::LDEORX:
+    case AArch64::LDEORW:
+    case AArch64::LDEORAB:
+    case AArch64::LDEORAH:
+    case AArch64::LDEORAW:
+    case AArch64::LDEORAX:
+    case AArch64::LDEORALB:
+    case AArch64::LDEORALH:
+    case AArch64::LDEORALW:
+    case AArch64::LDEORALX:
+    case AArch64::LDEORLB:
+    case AArch64::LDEORLH:
+    case AArch64::LDEORLX:
+    case AArch64::LDEORLW:
+      DestRegIdx = 1;
+      BaseRegIdx = 2;
+      break;
+    case AArch64::LDSETB:
+    case AArch64::LDSETH:
+    case AArch64::LDSETX:
+    case AArch64::LDSETW:
+    case AArch64::LDSETAB:
+    case AArch64::LDSETAH:
+    case AArch64::LDSETAW:
+    case AArch64::LDSETAX:
+    case AArch64::LDSETALB:
+    case AArch64::LDSETALH:
+    case AArch64::LDSETALW:
+    case AArch64::LDSETALX:
+    case AArch64::LDSETLB:
+    case AArch64::LDSETLH:
+    case AArch64::LDSETLX:
+    case AArch64::LDSETLW:
+      DestRegIdx = 1;
+      BaseRegIdx = 2;
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
+
 static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
   switch (Opcode) {
   default:
@@ -410,6 +554,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
     IsPrePost = true;
     break;
 
+  // LD(A)?(X)?R(B|H|W|X)
   case AArch64::LDXRB:
   case AArch64::LDXRH:
   case AArch64::LDXRW:
@@ -428,6 +573,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
     IsPrePost = false;
     break;
 
+  // LD(A|X)P(W|X)
   case AArch64::LDXPW:
   case AArch64::LDXPX:
   case AArch64::LDAXPW:
@@ -736,6 +882,26 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
     IsPrePost = true;
     break;
 
+  // op Dst, [Base]
+  case AArch64::STLRB:
+  case AArch64::STLRH:
+  case AArch64::STLRW:
+  case AArch64::STLRX:
+    DestRegIdx = 0;
+    BaseRegIdx = 1;
+    OffsetIdx = -1;
+    IsPrePost = false;
+    break;
+
+  // Base = op Dst, [Base, (-4|-8)]!
+  // case AArch64::STLRWpre:
+  // case AArch64::STLRXpre:
+  //   DestRegIdx = 1;
+  //   BaseRegIdx = 2;
+  //   OffsetIdx = -1; // constant offset
+  //   IsPrePost = true;
+  //   break;
+
   case AArch64::STXRB:
   case AArch64::STXRH:
   case AArch64::STXRW:
@@ -823,6 +989,14 @@ static inline unsigned convertPrePostToBase(unsigned Op, bool &IsPre, bool &IsBa
   case AArch64::STPXpre:
     IsPre = true;
     return AArch64::STPXi;
+  // case AArch64::STLRWpre:
+  //   IsPre = true;
+  //   IsBaseNoOffset = true;
+  //   return AArch64::STPWi;
+  // case AArch64::STLRXpre:
+  //   IsPre = true;
+  //   IsBaseNoOffset = true;
+    // return AArch64::STLRX;
   case AArch64::LD1i64_POST:
     IsBaseNoOffset = true;
     return AArch64::LD1i64;
@@ -1681,6 +1855,7 @@ static bool isPairedLdSt(unsigned Opcode) {
   switch (Opcode) {
   default:
     return false;
+    // TODO: STXPX
   case AArch64::LDPSi:
   case AArch64::LDPSWi:
   case AArch64::LDPDi:

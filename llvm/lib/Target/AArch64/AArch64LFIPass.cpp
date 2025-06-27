@@ -483,7 +483,7 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
       Shift = 0;
 
     MachineInstr *Fixup =
-        BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
+        BuildMI(*MF, MI.getDebugLoc(), TII->get(Extend ? AArch64::ADDXrx : AArch64::ADDXrs))
             .addReg(AArch64::X22)
             .addReg(BaseReg)
             .addReg(OffsetReg)

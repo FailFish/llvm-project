@@ -327,7 +327,7 @@ bool AArch64LFI::handleIndBr(MachineInstr &MI) {
   MachineOperand &MO = MI.getOperand(0);
   Register Reg = MO.getReg();
 
-  if (isAddrReg(Reg)) {
+  if (isSafeIndBr(MI.getOpcode(), Reg)) {
     return false;
   }
 

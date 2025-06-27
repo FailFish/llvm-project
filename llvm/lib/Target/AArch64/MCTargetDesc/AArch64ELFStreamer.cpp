@@ -570,7 +570,7 @@ private:
   }
 
   void emitIndirectBranch(unsigned int Opcode, MCRegister Rt, const MCInst &Inst, const MCSubtargetInfo &STI) {
-    if (isAddrReg(Rt)) {
+    if (isSafeIndBr(Opcode, Rt)) {
       AArch64ELFStreamer::emitInstruction(Inst, STI);
       return;
     }

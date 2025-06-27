@@ -687,7 +687,10 @@ public:
     case AArch64::ADDXri:
     case AArch64::SUBXri:
       Reg = Inst.getOperand(0).getReg();
-      if (Reg != AArch64::SP)
+      // NOTE: different from the earlier lfi pass
+      // either 1. not-sp-writing or 2. safe-sp-writing
+      if (Reg != AArch64::SP ||
+          (Reg == AArch64::SP && Inst.getOperand(1).getReg() == AArch64::X21))
         break;
       if (Inst.getOperand(2).getImm() == 0) {
         emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
@@ -698,6 +701,7 @@ public:
       return;
     case AArch64::ADDXrr:
     case AArch64::SUBXrr:
+      llvm_unreachable_internal("(ADD|SUB)Xrr at AArch64LFIELFStreamer");
     case AArch64::ADDXrs:
     case AArch64::SUBXrs:
     case AArch64::ADDXrx:
@@ -705,14 +709,16 @@ public:
     case AArch64::ADDXrx64:
     case AArch64::SUBXrx64:
       Reg = Inst.getOperand(0).getReg();
-      if (Reg != AArch64::SP)
+      if (Reg != AArch64::SP ||
+          (Reg == AArch64::SP && Inst.getOperand(1).getReg() == AArch64::X21))
         break;
       emitRRRI(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
       emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       return;
     case AArch64::ORRXrs:
       Reg = Inst.getOperand(0).getReg();
-      if ((Reg == AArch64::SP) || (Reg == AArch64::LR)) {
+      if ((Reg == AArch64::SP && Inst.getOperand(1).getReg() != AArch64::X21) ||
+          (Reg == AArch64::LR && Inst.getOperand(1).getReg() != AArch64::X21)) {
         emitRRRI(AArch64::ADDXrx, Reg, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
@@ -879,6 +885,11 @@ public:
       MCRegister Reg2 = Inst.getOperand(2).getReg();
       int64_t S = Inst.getOperand(3).getImm();
       int64_t IsShift = Inst.getOperand(4).getImm();
+      // avoid double instrumentation
+      if (Reg1 == AArch64::X21) {
+        AArch64ELFStreamer::emitInstruction(Inst, STI);
+        return;
+      }
       if (!IsShift)
         Shift = 0;
       if (S)

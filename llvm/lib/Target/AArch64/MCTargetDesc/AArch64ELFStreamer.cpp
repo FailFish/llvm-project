@@ -41,6 +41,7 @@
 #include "llvm/Support/AArch64BuildAttributes.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -482,6 +483,16 @@ private:
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }
 
+  void emitRII(unsigned int Op, MCRegister Rd, int64_t Imm, int64_t Imm2, const MCSubtargetInfo &STI) {
+    MCInst SafeInst;
+    SafeInst.setOpcode(Op);
+    SafeInst.addOperand(MCOperand::createReg(Rd));
+    SafeInst.addOperand(MCOperand::createImm(Imm));
+    SafeInst.addOperand(MCOperand::createImm(Imm2));
+    AArch64ELFStreamer::emitInstruction(SafeInst, STI);
+  }
+
+
   void emitRRI0(unsigned int Op, MCRegister Rd, MCRegister Rs, int64_t Imm, const MCSubtargetInfo &STI) {
     emitRRII(Op, Rd, Rs, Imm, 0, STI);
   }
@@ -649,6 +660,27 @@ public:
     case AArch64::MSR:
       if (Inst.getOperand(0).getImm() == AArch64SysReg::TPIDR_EL0) {
         emitTLSWrite(Inst, STI);
+        return;
+      }
+      break;
+    // NOTE: Unlike assembly level, we need every alias needs its own case.
+    // e.g., `mov $dst, $src` might be ORRXrs or ADDXri.
+    // and everytime we add a new case, we need to check if it can be double-instrumented.
+    // case AArch64::ANDXrs:
+    case AArch64::ANDXri:
+      // and sp, x0, #0xfffffffffffffff0
+      if (Inst.getOperand(0).getReg() == AArch64::SP) {
+        emitRRI(Inst.getOpcode(), AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        return;
+      }
+      break;
+    case AArch64::MOVZXi:
+      // movz x30, #imm, lsl #shift
+      // an alias of mov x30, #imm (AArch64::MOVXi doesn't exist)
+      if (Inst.getOperand(0).getReg() == AArch64::LR) {
+        emitRII(Inst.getOpcode(), AArch64::X22, Inst.getOperand(1).getImm(), Inst.getOperand(2).getImm(), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;

@@ -513,6 +513,73 @@ private:
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }
 
+  static bool getSafeReg(MCRegister &R, bool &NeedAdd) {
+    if (R == AArch64::LR) {
+      R = AArch64::X22; // need a following ADD(guard)
+      NeedAdd = true;
+      return true;
+    }
+    if (R == AArch64::X18 || R == AArch64::X21) {
+      R = AArch64::XZR; // disallow
+      NeedAdd = false;
+      return true;
+    }
+    return false; // do not need rewrite.
+  }
+
+  bool tryEmitLoadTempOrDiscard(const MCInst &Inst, bool &NeedAdd, const MCSubtargetInfo &STI) {
+    unsigned int Opcode = Inst.getOpcode();
+    int DestRegIdx;
+    int BaseRegIdx;
+    int OffsetIdx;
+    bool IsPrePost;
+
+    if (!getLoadInfo(Opcode, DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
+      return false;
+    }
+
+    // if (!isAddrReg(Inst.getOperand(BaseRegIdx).getReg()))
+    //   return false;
+
+    bool IsPair = DestRegIdx + 2 == BaseRegIdx; // FIXME: better heuristic
+    bool IsReplaced = false;
+    MCRegister DestReg = Inst.getOperand(DestRegIdx).getReg();
+    IsReplaced |= getSafeReg(DestReg, NeedAdd);
+    MCRegister DestReg2;
+    if (IsPair) {
+      DestReg2 = Inst.getOperand(DestRegIdx + 1).getReg();
+      IsReplaced |= getSafeReg(DestReg2, NeedAdd);
+    }
+
+    // MI doesn't need a rewrite.
+    if (!IsReplaced) {
+      return false;
+    }
+    MCInst SafeInst;
+    SafeInst.setOpcode(Opcode);
+    if (IsPrePost) {
+      SafeInst.addOperand(Inst.getOperand(BaseRegIdx));
+    }
+    SafeInst.addOperand(MCOperand::createReg(DestReg));
+    if (IsPair) {
+      SafeInst.addOperand(MCOperand::createReg(DestReg2));
+    }
+    SafeInst.addOperand(Inst.getOperand(BaseRegIdx));
+    SafeInst.addOperand(Inst.getOperand(OffsetIdx));
+    AArch64LFIELFStreamer::emitInstruction(SafeInst, STI); // call LFI rewriter again!
+    return true;
+  }
+
+  bool tryEmitLoadSpecialRegs(const MCInst &Inst, const MCSubtargetInfo &STI) {
+    bool NeedAdd = false;
+    bool Emitted = tryEmitLoadTempOrDiscard(Inst, NeedAdd, STI);
+    if (NeedAdd) {
+      assert(Emitted);
+      emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    }
+    return Emitted;
+  }
+
   void emitMemMask(unsigned int Opcode, MCRegister Rd, MCRegister Rt, const MCSubtargetInfo &STI) {
     MCRegister SafeRd = Rd;
     if (Rd == AArch64::LR)
@@ -724,67 +791,17 @@ public:
       }
       break;
     case AArch64::LDRXui:
-      if (isAddrReg(Inst.getOperand(1).getReg()) && Inst.getOperand(0).getReg() == AArch64::LR) {
-        emitRRI(AArch64::LDRXui, AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), STI);
-        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-        return;
-      }
-      break;
     case AArch64::LDRXpre:
-      if (isAddrReg(Inst.getOperand(2).getReg()) && Inst.getOperand(1).getReg() == AArch64::LR) {
-        emitRRRI(AArch64::LDRXpre, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-        return;
-      }
-      break;
     case AArch64::LDRXpost:
-      if (isAddrReg(Inst.getOperand(2).getReg()) && Inst.getOperand(1).getReg() == AArch64::LR) {
-        emitRRRI(AArch64::LDRXpost, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-        return;
-      }
-      break;
     case AArch64::LDPXi:
-      if (isAddrReg(Inst.getOperand(2).getReg())) {
-        if (Inst.getOperand(0).getReg() == AArch64::LR) {
-          emitRRRI(AArch64::LDPXi, AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-          return;
-        }
-        if (Inst.getOperand(1).getReg() == AArch64::LR) {
-          emitRRRI0(AArch64::LDPXi, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-          return;
-        }
-      }
-      break;
     case AArch64::LDPXpre:
-      if (isAddrReg(Inst.getOperand(3).getReg())) {
-        if (Inst.getOperand(1).getReg() == AArch64::LR) {
-          emitRRRRI(AArch64::LDPXpre, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-          return;
-        }
-        if (Inst.getOperand(2).getReg() == AArch64::LR) {
-          emitRRRRI(AArch64::LDPXpre, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), AArch64::X22, Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-          return;
-        }
-      }
-      break;
     case AArch64::LDPXpost:
-      if (isAddrReg(Inst.getOperand(3).getReg())) {
-        if (Inst.getOperand(1).getReg() == AArch64::LR) {
-          emitRRRRI(AArch64::LDPXpost, Inst.getOperand(0).getReg(), AArch64::X22, Inst.getOperand(2).getReg(), Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-          return;
-        }
-        if (Inst.getOperand(2).getReg() == AArch64::LR) {
-          emitRRRRI(AArch64::LDPXpost, Inst.getOperand(0).getReg(), Inst.getOperand(1).getReg(), AArch64::X22, Inst.getOperand(3).getReg(), Inst.getOperand(4).getImm(), STI);
-          emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
-          return;
-        }
-      }
+      // NOTE: some loads must be re-written twice
+      // 1) rewriting DestReg to prevent memory writes to illegal regs.
+      // 2) rewriting BaseReg/memory operand.
+      if (tryEmitLoadSpecialRegs(Inst, STI))
+        /* internally calls LFI rewriter again */
+        return;
       break;
     }
 

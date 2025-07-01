@@ -363,15 +363,9 @@ bool AArch64LFI::handleIndBr(MachineInstr &MI) {
   }
 
   MachineInstr *MaskMI = createAddFromBase(MI, AArch64::X18, Reg);
-  MachineInstrBuilder NewIndBr =
-    BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
-    .addReg(AArch64::X18);
-  if (MI.getOpcode() == AArch64::TCRETURNri)
-    NewIndBr.addImm(0);
+  MO.setReg(AArch64::X18);
 
-  insertMIs(MI, {MaskMI, NewIndBr});
-
-  MI.eraseFromParent();
+  insertMIs(MI, {MaskMI});
 
   return true;
 }

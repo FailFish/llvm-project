@@ -578,6 +578,29 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
         Changed = handleTLSWrite(MI);
       }
       break;
+    case AArch64::ANDXri:
+      // and sp, x0, #0xfffffffffffffff0
+      if (MI.getOperand(0).getReg() == AArch64::SP) {
+        MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
+          .add(MI.getOperand(1))
+          .add(MI.getOperand(2));
+        MachineInstr *Guard = createAddFromBase(MI, AArch64::SP, AArch64::X22);
+        insertMIs(MI, {NewMI, Guard});
+        MI.eraseFromParent();
+      }
+      break;
+    case AArch64::MOVZXi:
+      // movz x30, #imm, lsl #shift
+      // an alias of mov x30, #imm (AArch64::MOVXi doesn't exist)
+      if (MI.getOperand(0).getReg() == AArch64::LR) {
+        MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
+          .add(MI.getOperand(1))
+          .add(MI.getOperand(2));
+        MachineInstr *Guard = createAddFromBase(MI, AArch64::SP, AArch64::X22);
+        insertMIs(MI, {NewMI, Guard});
+        MI.eraseFromParent();
+      }
+      break;
     case AArch64::ADDXri:
     case AArch64::SUBXri: // FIXME
       if (MI.getOperand(0).getReg() != AArch64::SP)

@@ -883,7 +883,7 @@ void AArch64PassConfig::addPreEmitPass() {
 
   if (Triple(TM->getTargetTriple()).isVendorLFI()) {
     addPass(createAArch64LFIPass());
-    addPass(&MachineLICMID);
+    // addPass(&MachineLICMID);
   }
 }
 

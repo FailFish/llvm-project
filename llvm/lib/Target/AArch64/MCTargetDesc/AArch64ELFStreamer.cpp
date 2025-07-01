@@ -47,8 +47,8 @@
 
 using namespace llvm;
 
-static cl::opt<bool> ClEnableAArch64LFIELFStreamer(
-    "disable-aarch64-lfi-elf-streamer", cl::Hidden, cl::init(true),
+static cl::opt<bool> ClDisableAArch64LFIELFStreamer(
+    "disable-aarch64-lfi-elf-streamer", cl::Hidden, cl::init(false),
     cl::desc("disable LFI ELF Streamer"));
 
 namespace {
@@ -1074,7 +1074,7 @@ llvm::createAArch64ELFStreamer(const Triple &TheTriple, MCContext &Context,
                                std::unique_ptr<MCAsmBackend> &&TAB,
                                std::unique_ptr<MCObjectWriter> &&OW,
                                std::unique_ptr<MCCodeEmitter> &&Emitter) {
-  if (ClEnableAArch64LFIELFStreamer && TheTriple.isVendorLFI())
+  if (!ClDisableAArch64LFIELFStreamer && TheTriple.isVendorLFI())
     return new AArch64LFIELFStreamer(Context, std::move(TAB), std::move(OW),
                                   std::move(Emitter));
   return new AArch64ELFStreamer(Context, std::move(TAB), std::move(OW),

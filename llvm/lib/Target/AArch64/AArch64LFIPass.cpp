@@ -19,7 +19,7 @@
 
 using namespace llvm;
 
-static cl::opt<bool> ClDisableLFI(
+static cl::opt<bool> ClDisableLFIPass(
     "disable-lfi-pass", cl::Hidden, cl::init(false),
     cl::desc("disable LFI MIR pass"));
 
@@ -679,6 +679,8 @@ bool AArch64LFI::runOnMachineFunction(MachineFunction &MF) {
   LLVM_DEBUG(dbgs() << "Running AArch64 LFI Pass on function: " << MF.getName()
       << "\n");
   bool Changed = false;
+  if (ClDisableLFIPass)
+    return Changed;
 
   TII = static_cast<const AArch64InstrInfo *>(MF.getSubtarget().getInstrInfo());
   MLI = &getAnalysis<MachineLoopInfoWrapperPass>().getLI();

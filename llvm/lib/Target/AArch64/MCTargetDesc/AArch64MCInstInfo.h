@@ -1887,7 +1887,7 @@ static bool isAddrReg(MCRegister Reg) {
 
 static bool isSafeIndBr(unsigned Opcode, MCRegister Reg) {
   return (Opcode == AArch64::BR && Reg == AArch64::X18)
-    || (Opcode == AArch64::BLR && (Reg == AArch64::LR && Reg == AArch64::X18))
+    || (Opcode == AArch64::BLR && (Reg == AArch64::LR || Reg == AArch64::X18))
     || (Opcode == AArch64::RET && Reg == AArch64::LR);
 }
 

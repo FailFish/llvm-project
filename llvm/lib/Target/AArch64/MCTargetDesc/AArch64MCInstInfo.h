@@ -7,8 +7,21 @@
 using namespace llvm;
 
 namespace llvm {
+  struct MemInstInfo {
+    MemInstInfo() = default;
 
-static bool getAtomicLdStInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx) {
+    int DestRegIdx;
+    int BaseRegIdx;
+    int OffsetIdx;
+    bool IsPrePost = false;
+    bool IsPair = false;
+  };
+static std::optional<MemInstInfo> getAtomicLdStInfo(const unsigned int Opcode) {
+  int DestRegIdx;
+  int BaseRegIdx;
+  const int OffsetIdx = -1;
+  const bool IsPrePost = false;
+  bool IsPair = false;
   // (ST|LD)OPRegister: ld*, st*
   // CompareAndSwap(Pair)?(Unprvileged)?
   // Swap(LSUI)?
@@ -147,15 +160,20 @@ static bool getAtomicLdStInfo(const unsigned int Opcode, int &DestRegIdx, int &B
       BaseRegIdx = 2;
       break;
     default:
-      return false;
+      return std::nullopt;
   }
-  return true;
+  return MemInstInfo { DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost, IsPair };
 }
 
-static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
+static inline std::optional<MemInstInfo> getLoadInfo(const unsigned int Opcode) {
+  int DestRegIdx;
+  int BaseRegIdx;
+  int OffsetIdx;
+  bool IsPrePost;
+  bool IsPair = false;
   switch (Opcode) {
   default:
-    return false;
+    return std::nullopt;
 
   case AArch64::LD1i64:
   case AArch64::LD2i64:
@@ -515,10 +533,11 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
   case AArch64::LDPQi:
   case AArch64::LDPDi:
   case AArch64::LDPSi:
-    DestRegIdx = -1;
+    DestRegIdx = 0;
     BaseRegIdx = 2;
     OffsetIdx = 3;
     IsPrePost = false;
+    IsPair = true;
     break;
 
   case AArch64::LDPSWi:
@@ -528,6 +547,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
     BaseRegIdx = 2;
     OffsetIdx = 3;
     IsPrePost = false;
+    IsPair = true;
     break;
 
   case AArch64::LDPQpost:
@@ -536,10 +556,11 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
   case AArch64::LDPDpre:
   case AArch64::LDPSpost:
   case AArch64::LDPSpre:
-    DestRegIdx = -1;
+    DestRegIdx = 1;
     BaseRegIdx = 3;
     OffsetIdx = 4;
     IsPrePost = true;
+    IsPair = true;
     break;
 
   case AArch64::LDPSWpost:
@@ -552,6 +573,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
     BaseRegIdx = 3;
     OffsetIdx = 4;
     IsPrePost = true;
+    IsPair = true;
     break;
 
   // LD(A)?(X)?R(B|H|W|X)
@@ -567,7 +589,7 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
   case AArch64::LDARH:
   case AArch64::LDARW:
   case AArch64::LDARX:
-    DestRegIdx = -1;
+    DestRegIdx = 0;
     BaseRegIdx = 1;
     OffsetIdx = -1;
     IsPrePost = false;
@@ -578,20 +600,26 @@ static inline bool getLoadInfo(const unsigned int Opcode, int &DestRegIdx, int &
   case AArch64::LDXPX:
   case AArch64::LDAXPW:
   case AArch64::LDAXPX:
-    DestRegIdx = -1; // Pair
+    DestRegIdx = 0;
     BaseRegIdx = 2;
     OffsetIdx = -1;
     IsPrePost = false;
+    IsPair = true;
     break;
   }
 
-  return true;
+  return MemInstInfo { DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost, IsPair };
 }
 
-static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int &BaseRegIdx, int &OffsetIdx, bool &IsPrePost) {
+static inline std::optional<MemInstInfo> getStoreInfo(const unsigned int Opcode) {
+  int DestRegIdx;
+  int BaseRegIdx;
+  int OffsetIdx;
+  bool IsPrePost;
+  bool IsPair = false;
   switch (Opcode) {
   default:
-    return false;
+    return std::nullopt;
 
   case AArch64::ST1i8:
   case AArch64::ST1i16:
@@ -846,10 +874,11 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
   case AArch64::STPQi:
   case AArch64::STPDi:
   case AArch64::STPSi:
-    DestRegIdx = -1;
+    DestRegIdx = 0;
     BaseRegIdx = 2;
     OffsetIdx = 3;
     IsPrePost = false;
+    IsPair = true;
     break;
 
   case AArch64::STPWi:
@@ -858,6 +887,7 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
     BaseRegIdx = 2;
     OffsetIdx = 3;
     IsPrePost = false;
+    IsPair = true;
     break;
 
   case AArch64::STPQpost:
@@ -866,10 +896,11 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
   case AArch64::STPDpre:
   case AArch64::STPSpost:
   case AArch64::STPSpre:
-    DestRegIdx = -1;
+    DestRegIdx = 1;
     BaseRegIdx = 3;
     OffsetIdx = 4;
     IsPrePost = true;
+    IsPair = true;
     break;
 
   case AArch64::STPWpost:
@@ -880,6 +911,7 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
     BaseRegIdx = 3;
     OffsetIdx = 4;
     IsPrePost = true;
+    IsPair = true;
     break;
 
   // op Dst, [Base]
@@ -910,7 +942,7 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
   case AArch64::STLXRH:
   case AArch64::STLXRW:
   case AArch64::STLXRX:
-    DestRegIdx = -1;
+    DestRegIdx = 0;
     BaseRegIdx = 2;
     OffsetIdx = -1;
     IsPrePost = false;
@@ -920,15 +952,30 @@ static inline bool getStoreInfo(const unsigned int Opcode, int &DestRegIdx, int 
   case AArch64::STXPX:
   case AArch64::STLXPW:
   case AArch64::STLXPX:
-    DestRegIdx = 0; // return the status result
+    DestRegIdx = 1; // return the status result at 0
     BaseRegIdx = 3;
     OffsetIdx = -1;
     IsPrePost = false;
+    IsPair = true;
     break;
   }
 
-  return true;
+  return MemInstInfo { DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost, IsPair };
 }
+
+static std::optional<MemInstInfo> getMemInstInfo(unsigned Op) {
+  auto MII = getLoadInfo(Op);
+  if (MII.has_value())
+    return MII;
+  MII = getStoreInfo(Op);
+  if (MII.has_value())
+    return MII;
+  MII = getAtomicLdStInfo(Op);
+  if (MII.has_value())
+    return MII;
+  return std::nullopt;
+}
+
 
 static inline unsigned convertPrePostToBase(unsigned Op, bool &IsPre, bool &IsBaseNoOffset) {
   IsPre = false;

@@ -47,7 +47,7 @@ private:
   MachineInstr *createMov(MachineInstr &MI, Register DestReg, Register BaseReg);
   MachineInstr *createAddXrx(MachineInstr &MI, Register DestReg, Register BaseReg, Register OffsetReg);
   MachineInstr *createAddFromBase(MachineInstr &MI, Register DestReg, Register OffsetReg);
-  MachineInstr *createLoadTempOrDiscard(MachineInstr &MI, bool &NeedAdd);
+  MachineInstr *createLoadWithAltDestReg(MachineInstr &MI, const MemInstInfo &MII, Register From, Register To);
   MachineInstr *createSafeMemDemoted(MachineInstr &MI, unsigned BaseRegIdx);
   SmallVector<MachineInstr *, 2> createSafeMemN(MachineInstr &MI, unsigned BaseRegIdx);
   SmallVector<MachineInstr *, 2> createMemMask(MachineInstr &MI, unsigned int NewOp, Register Rd, Register Rt, bool IsLoad);
@@ -107,71 +107,6 @@ MachineInstr *AArch64LFI::createAddFromBase(MachineInstr &MI, Register DestReg, 
   return createAddXrx(MI, DestReg, AArch64::X21, OffsetReg);
 }
 
-static bool getSafeReg(Register &R, bool &NeedAdd) {
-  if (R == AArch64::LR) {
-    R = AArch64::X22; // need a following ADD(guard)
-    NeedAdd = true;
-    return true;
-  }
-  if (R == AArch64::X18 || R == AArch64::X21) {
-    R = AArch64::XZR; // disallow
-    NeedAdd = false;
-    return true;
-  }
-  return false; // do not need rewrite.
-}
-
-// If LoadInst writes X30, => replace X30 with X22, and set NeedAdd
-// If LoadInst writes LR, SP => replace them with XZR (discard)
-MachineInstr *AArch64LFI::createLoadTempOrDiscard(MachineInstr &MI, bool &NeedAdd) {
-  assert(MI.getDesc().mayLoad());
-  int DestRegIdx;
-  int BaseRegIdx;
-  int OffsetIdx;
-  bool IsPrePost;
-
-  if (!getLoadInfo(MI.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-    LLVM_DEBUG(dbgs() << "WARNING: MachineInstr(mayLoad), but getLoadInfo cannot recognize: ";
-        MI.dump(););
-    return nullptr;
-  }
-
-  // if (!isAddrReg(MI.getOperand(BaseRegIdx).getReg()))
-  //   return nullptr;
-
-  bool IsPair = DestRegIdx + 2 == BaseRegIdx; // FIXME: better heuristic
-  bool IsReplaced = false;
-  Register DestReg = MI.getOperand(DestRegIdx).getReg();
-  IsReplaced |= getSafeReg(DestReg, NeedAdd);
-  Register DestReg2;
-  if (IsPair) {
-    DestReg2 = MI.getOperand(DestRegIdx + 1).getReg();
-    IsReplaced |= getSafeReg(DestReg2, NeedAdd);
-  }
-
-  // MI doesn't need a rewrite.
-  if (!IsReplaced) {
-    return nullptr;
-  }
-
-  MachineInstrBuilder MIB = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc());
-
-  // NOTE: AArch64 Load Instr layout
-  // [PrePost_BaseReg,] DestReg[, DestReg2], BaseReg, Offset(Reg|Imm)
-  if (IsPrePost)
-    MIB.addDef(MI.getOperand(BaseRegIdx).getReg());
-
-  MIB.addDef(DestReg);
-  if (IsPair) {
-    MIB.addDef(DestReg2);
-  }
-
-  MIB.addReg(MI.getOperand(BaseRegIdx).getReg());
-  MIB.add(MI.getOperand(OffsetIdx));
-
-  return MIB;
-}
-
 MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRegIdx) {
   bool IsPre, IsBaseNoOffset;
   auto NewOpCode = convertPrePostToBase(MI.getOpcode(), IsPre, IsBaseNoOffset);
@@ -193,15 +128,9 @@ MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRe
 SmallVector<MachineInstr *, 2> AArch64LFI::createSafeMemN(MachineInstr &MI, unsigned BaseRegIdx) {
   SmallVector<MachineInstr *, 2> Instrs;
   MachineInstrBuilder MIB = BuildMI(*MF, MI.getDebugLoc(), TII->get(MI.getOpcode()));
-  bool PostGuard = false;
   for (unsigned I = 0; I < BaseRegIdx; I++) {
     auto MO = MI.getOperand(I);
-    if (MO.isReg() && MO.getReg() == AArch64::LR) {
-      PostGuard = true;
-      MIB.addReg(AArch64::X22, MO.isDef() ? RegState::Define : 0);
-    } else {
-      MIB.add(MO);
-    }
+    MIB.add(MO);
   }
   MIB.addReg(AArch64::X18);
 
@@ -209,9 +138,6 @@ SmallVector<MachineInstr *, 2> AArch64LFI::createSafeMemN(MachineInstr &MI, unsi
     MIB.add(MI.getOperand(I));
 
   Instrs.push_back(MIB);
-  if (PostGuard) {
-    Instrs.push_back(createAddFromBase(MI, AArch64::LR, AArch64::X22));
-  }
 
   return Instrs;
 }
@@ -259,23 +185,57 @@ MachineInstr *AArch64LFI::createMov(MachineInstr &MI, Register DestReg, Register
     .addImm(0);
 }
 
-bool AArch64LFI::handleLoadSpecialRegs(MachineInstr &MI) {
-  bool NeedAdd = false;
-  SmallVector<MachineInstr *> Insts;
-  MachineInstr *Load = createLoadTempOrDiscard(MI, NeedAdd);
-  if (Load == nullptr)
-    return false;
-  Insts.push_back(Load);
+MachineInstr *AArch64LFI::createLoadWithAltDestReg(MachineInstr &MI, const MemInstInfo &MII, Register From, Register To) {
+  MachineInstrBuilder MIB = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc());
+  Register BaseReg = MI.getOperand(MII.BaseRegIdx).getReg();
+  Register DestReg = MI.getOperand(MII.DestRegIdx).getReg();
 
-  if (NeedAdd) {
-    MachineInstr *Add = createAddFromBase(MI, AArch64::LR, AArch64::X22);
-    Insts.push_back(Add);
+  // NOTE: AArch64 Load Instr layout
+  // [PrePost_BaseReg,] DestReg[, DestReg2], BaseReg, Offset(Reg|Imm)
+  if (MII.IsPrePost)
+    MIB.addDef(BaseReg);
+
+  MIB.addDef(DestReg == From ? To : DestReg);
+  if (MII.IsPair) {
+    Register DestReg2 = MI.getOperand(MII.DestRegIdx + 1).getReg();
+    MIB.addDef(DestReg2 == From ? To : DestReg2);
   }
 
+  MIB.addReg(BaseReg);
+  MIB.add(MI.getOperand(MII.OffsetIdx));
+
+  return MIB;
+}
+
+static bool definesReg(const MachineInstr &MI, const MemInstInfo &MII, const MCRegister Reg) {
+  return MI.definesRegister(Reg, /*TRI=*/nullptr);
+}
+
+// If LoadInst writes X30 and basereg is not x21 => replace X30 with X22 and add a postguard
+// If LoadInst writes X18, X21 => replace them with XZR (discard)
+bool AArch64LFI::handleLoadSpecialRegs(MachineInstr &MI) {
+  std::optional<MemInstInfo> MII = getLoadInfo(MI.getOpcode());
+  SmallVector<MachineInstr *> Insts;
+
+  if (definesReg(MI, *MII, AArch64::LR) && MI.getOperand(MII->BaseRegIdx).getReg() != AArch64::X21) {
+    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::LR, AArch64::X22);
+    MachineInstr *Add = createAddFromBase(MI, AArch64::LR, AArch64::X22);
+    Insts.append({NewMI, Add});
+  }
+  if (definesReg(MI, *MII, AArch64::X18)) {
+    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::X18, AArch64::XZR);
+    Insts.push_back(NewMI);
+  }
+  if (definesReg(MI, *MII, AArch64::X21)) {
+    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::X21, AArch64::XZR);
+    Insts.push_back(NewMI);
+  }
+  if (Insts.empty()) {
+    return false;
+  }
   insertMIs(MI, Insts);
   MI.eraseFromParent();
-
-  handleLoadStore(*Load); // call LFI rewriter again
+  handleLoadStore(*Insts[0]); // call LFI rewriter again
   return true;
 }
 
@@ -372,13 +332,21 @@ bool AArch64LFI::handleIndBr(MachineInstr &MI) {
 
 bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
   LLVM_DEBUG(DBGLOC << '\n';);
-  int DestRegIdx;
-  int BaseRegIdx;
-  int OffsetIdx;
-  bool IsPrePost;
+  std::optional<MemInstInfo> MII = getMemInstInfo(MI.getOpcode());
+  if (!MII.has_value()) {
+    return false;
+  }
+  const auto [DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost, IsPair] = MII.value();
 
-  if (!getLoadInfo(MI.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-    if (!getStoreInfo(MI.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
+  // LFI Specification 1.9, 1.15.6
+  // handling `ldr x30, [x21, #i]`
+  if (MI.getOpcode() == AArch64::LDRXui) {
+    auto DestReg = MI.getOperand(DestRegIdx).getReg();
+    auto BaseReg = MI.getOperand(BaseRegIdx).getReg();
+    auto OffsetMO = MI.getOperand(OffsetIdx);
+    // NOTE: Implicit scale 8 for LDRXui <imm12> field
+    if (DestReg == AArch64::LR && BaseReg == AArch64::X21 &&
+        (OffsetMO.isImm() && OffsetMO.getImm() < 32)) {
       return false;
     }
   }
@@ -550,6 +518,7 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
   LLVM_DEBUG(DBGLOC; MI.dump(););
   bool Changed = false;
   Register Reg;
+  // TODO: lift atomic instruction handling from mcinst rewriter
   switch (MI.getOpcode()) {
     case AArch64::TCRETURNri:
     // NOTE: tailcall instrs below will be expanded by AArch64LFIELFStreamer.
@@ -568,7 +537,6 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
       Changed = handleSyscall(MI);
       break;
     case AArch64::MRS:
-      // NOTE: In MIR level, Sysreg is an immediate.
       if (MI.getOperand(1).getImm() == AArch64SysReg::TPIDR_EL0) {
         Changed = handleTLSRead(MI);
       }

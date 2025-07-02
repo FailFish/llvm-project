@@ -513,71 +513,52 @@ private:
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }
 
-  static bool getSafeReg(MCRegister &R, bool &NeedAdd) {
-    if (R == AArch64::LR) {
-      R = AArch64::X22; // need a following ADD(guard)
-      NeedAdd = true;
-      return true;
-    }
-    if (R == AArch64::X18 || R == AArch64::X21) {
-      R = AArch64::XZR; // disallow
-      NeedAdd = false;
-      return true;
-    }
-    return false; // do not need rewrite.
-  }
-
-  bool tryEmitLoadTempOrDiscard(const MCInst &Inst, bool &NeedAdd, const MCSubtargetInfo &STI) {
+  void emitLoadWithAltDestReg(const MCInst &Inst, const MemInstInfo &MII, const MCRegister From, const MCRegister To, const MCSubtargetInfo &STI) {
     unsigned int Opcode = Inst.getOpcode();
-    int DestRegIdx;
-    int BaseRegIdx;
-    int OffsetIdx;
-    bool IsPrePost;
+    MCRegister DestReg = Inst.getOperand(MII.DestRegIdx).getReg();
 
-    if (!getLoadInfo(Opcode, DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-      return false;
-    }
-
-    // if (!isAddrReg(Inst.getOperand(BaseRegIdx).getReg()))
-    //   return false;
-
-    bool IsPair = DestRegIdx + 2 == BaseRegIdx; // FIXME: better heuristic
-    bool IsReplaced = false;
-    MCRegister DestReg = Inst.getOperand(DestRegIdx).getReg();
-    IsReplaced |= getSafeReg(DestReg, NeedAdd);
-    MCRegister DestReg2;
-    if (IsPair) {
-      DestReg2 = Inst.getOperand(DestRegIdx + 1).getReg();
-      IsReplaced |= getSafeReg(DestReg2, NeedAdd);
-    }
-
-    // MI doesn't need a rewrite.
-    if (!IsReplaced) {
-      return false;
-    }
     MCInst SafeInst;
     SafeInst.setOpcode(Opcode);
-    if (IsPrePost) {
-      SafeInst.addOperand(Inst.getOperand(BaseRegIdx));
+    if (MII.IsPrePost) {
+      SafeInst.addOperand(Inst.getOperand(MII.BaseRegIdx));
     }
-    SafeInst.addOperand(MCOperand::createReg(DestReg));
-    if (IsPair) {
-      SafeInst.addOperand(MCOperand::createReg(DestReg2));
+    SafeInst.addOperand(MCOperand::createReg(DestReg == From ? To : DestReg));
+    if (MII.IsPair) {
+      MCRegister DestReg2 = Inst.getOperand(MII.DestRegIdx + 1).getReg();
+      SafeInst.addOperand(MCOperand::createReg(DestReg2 == From ? To : DestReg2));
     }
-    SafeInst.addOperand(Inst.getOperand(BaseRegIdx));
-    SafeInst.addOperand(Inst.getOperand(OffsetIdx));
+    SafeInst.addOperand(Inst.getOperand(MII.BaseRegIdx));
+    SafeInst.addOperand(Inst.getOperand(MII.OffsetIdx));
     AArch64LFIELFStreamer::emitInstruction(SafeInst, STI); // call LFI rewriter again!
-    return true;
+  }
+
+  bool definesReg(const MCInst &Inst, const MemInstInfo &MII, const MCRegister Reg) {
+    MCRegister DestReg = Inst.getOperand(MII.DestRegIdx).getReg();
+    return DestReg == Reg || (MII.IsPair && Inst.getOperand(MII.DestRegIdx + 1).getReg() == Reg);
   }
 
   bool tryEmitLoadSpecialRegs(const MCInst &Inst, const MCSubtargetInfo &STI) {
-    bool NeedAdd = false;
-    bool Emitted = tryEmitLoadTempOrDiscard(Inst, NeedAdd, STI);
-    if (NeedAdd) {
-      assert(Emitted);
-      emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    unsigned int Opcode = Inst.getOpcode();
+    std::optional<MemInstInfo> MII = getLoadInfo(Opcode);
+
+    if (!MII.has_value()) {
+      return false;
     }
-    return Emitted;
+    if (definesReg(Inst, *MII, AArch64::LR) && Inst.getOperand(MII->BaseRegIdx).getReg() != AArch64::X21) {
+      emitLoadWithAltDestReg(Inst, *MII, AArch64::LR, AArch64::X22, STI);
+      emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      return true;
+    }
+    // FIXME: handling Load X18, X21, <MemOp>
+    if (definesReg(Inst, *MII, AArch64::X18)) {
+      emitLoadWithAltDestReg(Inst, *MII, AArch64::X18, AArch64::XZR, STI);
+      return true;
+    }
+    if (definesReg(Inst, *MII, AArch64::X21)) {
+      emitLoadWithAltDestReg(Inst, *MII, AArch64::X21, AArch64::XZR, STI);
+      return true;
+    }
+    return false;
   }
 
   void emitMemMask(unsigned int Opcode, MCRegister Rd, MCRegister Rt, const MCSubtargetInfo &STI) {
@@ -611,21 +592,13 @@ private:
   void emitSafeMemN(unsigned N, const MCInst &Inst, const MCSubtargetInfo &STI) {
     MCInst SafeInst;
     SafeInst.setOpcode(Inst.getOpcode());
-    bool PostGuard = false;
     for (unsigned I = 0; I < N; I++) {
-      if (Inst.getOperand(I).isReg() && Inst.getOperand(I).getReg() == AArch64::LR) {
-        PostGuard = true;
-        SafeInst.addOperand(MCOperand::createReg(AArch64::X22));
-      } else {
-        SafeInst.addOperand(Inst.getOperand(I));
-      }
+      SafeInst.addOperand(Inst.getOperand(I));
     }
     SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
     for (unsigned I = N + 1; I < Inst.getNumOperands(); I++)
       SafeInst.addOperand(Inst.getOperand(I));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
-    if (PostGuard)
-      emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSafeMem1(const MCInst &Inst, const MCSubtargetInfo &STI) {
@@ -730,7 +703,7 @@ public:
         return;
       }
       break;
-    // NOTE: Unlike assembly level, we need every alias needs its own case.
+    // NOTE: Unlike assembly level, every instr alias needs its own case.
     // e.g., `mov $dst, $src` might be ORRXrs or ADDXri.
     // and everytime we add a new case, we need to check if it can be double-instrumented.
     // case AArch64::ANDXrs:
@@ -805,15 +778,25 @@ public:
       break;
     }
 
-    int DestRegIdx, BaseRegIdx, OffsetIdx = -1;
-    bool IsPrePost = false;
-    if (!getLoadInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-      if (!getStoreInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost)) {
-        if (!getAtomicLdStInfo(Inst.getOpcode(), DestRegIdx, BaseRegIdx)) {
-          // not load or store, so emit as is.
-          AArch64ELFStreamer::emitInstruction(Inst, STI);
-          return;
-        }
+    std::optional<MemInstInfo> MII = getMemInstInfo(Inst.getOpcode());
+    if (!MII.has_value()) {
+      // not load or store, so emit as is.
+      AArch64ELFStreamer::emitInstruction(Inst, STI);
+      return;
+    }
+    const auto [DestRegIdx, BaseRegIdx, OffsetIdx, IsPrePost, IsPair] = MII.value();
+
+    // LFI Specification 1.9, 1.15.6
+    // handling `ldr x30, [x21, #i]`
+    if (Inst.getOpcode() == AArch64::LDRXui) {
+      auto DestReg = Inst.getOperand(DestRegIdx).getReg();
+      auto BaseReg = Inst.getOperand(BaseRegIdx).getReg();
+      auto OffsetMO = Inst.getOperand(OffsetIdx);
+      // NOTE: Implicit scale 8 for LDRXui <imm12> field
+      if (DestReg == AArch64::LR && BaseReg == AArch64::X21 &&
+          (OffsetMO.isImm() && OffsetMO.getImm() < 32)) {
+        AArch64ELFStreamer::emitInstruction(Inst, STI);
+        return;
       }
     }
 
@@ -905,7 +888,7 @@ public:
       MCRegister Reg2 = Inst.getOperand(2).getReg();
       int64_t S = Inst.getOperand(3).getImm();
       int64_t IsShift = Inst.getOperand(4).getImm();
-      // avoid double instrumentation
+      // NOTE: to avoid double instrumentation.
       if (Reg1 == AArch64::X21) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;

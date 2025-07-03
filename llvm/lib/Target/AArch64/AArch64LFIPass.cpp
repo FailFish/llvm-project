@@ -583,7 +583,7 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
       } else {
         MachineInstr *NewMI =
           BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
-          .addReg(AArch64::SP)
+          .addReg(MI.getOperand(1).getReg())
           .addImm(MI.getOperand(2).getImm())
           .addImm(MI.getOperand(3).getImm());
         MachineInstr *Guard =

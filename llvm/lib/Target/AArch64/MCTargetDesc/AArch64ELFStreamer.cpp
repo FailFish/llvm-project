@@ -735,7 +735,7 @@ public:
       if (Inst.getOperand(2).getImm() == 0) {
         emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       } else {
-        emitRRII(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getImm(), Inst.getOperand(3).getImm(), STI);
+        emitRRII(Inst.getOpcode(), AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), Inst.getOperand(3).getImm(), STI);
         emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       }
       return;

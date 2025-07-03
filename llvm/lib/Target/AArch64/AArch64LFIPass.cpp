@@ -365,11 +365,27 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
       Instrs.push_back(SafeMem);
 
       MachineInstr *Fixup;
-      if (MI.getOperand(OffsetIdx).isReg()) {
-        Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrs), BaseReg)
-          .addReg(BaseReg)
-          .addReg(MI.getOperand(OffsetIdx).getReg())
-          .addImm(0);
+      MachineOperand &OffsetMO = MI.getOperand(OffsetIdx);
+      if (OffsetMO.isReg()) {
+        // The immediate offset of post-indexed addressing NEON Instrs has a fixed value, and
+        // it is encoded as a post-index addressing with XZR register operand.
+        // e.g., LD3Threev3d_POST can only have #48 as its operand and its offset
+        // MachineOperand holds XZR, which is a *Register* kind, not Imm.
+        Register OffReg = OffsetMO.getReg();
+        if (OffReg == AArch64::XZR) {
+          const LdStNInstrDesc *Info = getLdStNInstrDesc(MI.getOpcode());
+          assert(Info && Info->NaturalOffset >= 0);
+          Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXri), BaseReg)
+            .addReg(BaseReg)
+            .addImm(Info->NaturalOffset)
+            .addImm(0);
+        } else {
+          assert(OffReg != AArch64::WZR);
+          Fixup = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrs), BaseReg)
+            .addReg(BaseReg)
+            .addReg(MI.getOperand(OffsetIdx).getReg())
+            .addImm(0);
+        }
       } else {
         auto Offset = MI.getOperand(OffsetIdx).getImm() * getPrePostScale(MI.getOpcode());
         if (Offset >= 0) {

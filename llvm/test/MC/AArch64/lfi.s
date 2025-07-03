@@ -92,6 +92,11 @@ test_norewrite:
 # CHECK-NEXT:  ldr x0, [sp, #8]!
 # CHECK-NEXT:  ldr x0, [sp], #8
 
+test_x21_load:
+  ldr x30, [x21, #0]
+  ldr x30, [x21, #8]
+  ldr x30, [x21, #256]
+
 test_mem_basic:
 	ldr x0, [x1]
 	str x0, [x2]
@@ -176,3 +181,84 @@ test_mem_pair:
 
 # CHECK-NEXT:  add x18, x21, w3, uxtw
 # CHECK-NEXT:  stlxp w0, x1, x2, [x18]
+
+test_neon:
+  ld1 { v0.b }[1], [x0]
+  ld1 { v0.b }[1], [x0], x1
+  ld1 { v0.b }[1], [x0], #1
+  ld3 {v0.2d-v2.2d}, [x2]
+  ld3 {v0.2d-v2.2d}, [x16], x1
+  ld3 {v0.2d-v2.2d}, [x16], #48
+  ld4 {v0.2s-v3.2s}, [x0], #32
+  ld4 {v0.2s-v3.2s}, [sp], #32
+  st2 {v0.8b-v1.8b}, [x1], #16
+  st2 { v0.s, v1.s }[3], [x0], #8
+  st2 { v0.s, v1.s }[3], [sp], #8
+  LD1R { v0.8b }, [x0]
+  LD1R { v0.8b }, [x0], #1
+  LD1R { v0.4h }, [x0], #2
+  LD1R { v0.2s }, [x0], #4
+  LD1R { v0.1d }, [x0], #8
+  LD1R { v0.8b }, [x0], x1
+
+# CHECK-LABEL: <test_neon>:
+# CHECK:      add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1     { v0.b }[1], [x18]
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1     { v0.b }[1], [x18]
+# CHECK-NEXT: add     x0, x0, x1
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1     { v0.b }[1], [x18]
+# CHECK-NEXT: add     x0, x0, #0x1
+
+# CHECK-NEXT: add     x18, x21, w2, uxtw
+# CHECK-NEXT: ld3     { v0.2d, v1.2d, v2.2d }, [x18]
+
+# CHECK-NEXT: add     x18, x21, w16, uxtw
+# CHECK-NEXT: ld3     { v0.2d, v1.2d, v2.2d }, [x18]
+# CHECK-NEXT: add     x16, x16, x1
+
+# CHECK-NEXT: add     x18, x21, w16, uxtw
+# CHECK-NEXT: ld3     { v0.2d, v1.2d, v2.2d }, [x18]
+# CHECK-NEXT: add     x16, x16, #0x30
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld4     { v0.2s, v1.2s, v2.2s, v3.2s }, [x18]
+# CHECK-NEXT: add     x0, x0, #0x20
+
+# CHECK-NEXT: ld4     { v0.2s, v1.2s, v2.2s, v3.2s }, [sp], #32
+
+# CHECK-NEXT: add     x18, x21, w1, uxtw
+# CHECK-NEXT: st2     { v0.8b, v1.8b }, [x18]
+# CHECK-NEXT: add     x1, x1, #0x10
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: st2     { v0.s, v1.s }[3], [x18]
+# CHECK-NEXT: add     x0, x0, #0x8
+
+# CHECK-NEXT: st2     { v0.s, v1.s }[3], [sp], #8
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1r    { v0.8b }, [x18]
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1r    { v0.8b }, [x18]
+# CHECK-NEXT: add     x0, x0, #0x1
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1r    { v0.4h }, [x18]
+# CHECK-NEXT: add     x0, x0, #0x2
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1r    { v0.2s }, [x18]
+# CHECK-NEXT: add     x0, x0, #0x4
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1r    { v0.1d }, [x18]
+# CHECK-NEXT: add     x0, x0, #0x8
+
+# CHECK-NEXT: add     x18, x21, w0, uxtw
+# CHECK-NEXT: ld1r    { v0.8b }, [x18]
+# CHECK-NEXT: add     x0, x0, x1

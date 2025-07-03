@@ -810,8 +810,21 @@ public:
         assert(OffsetIdx != -1 && "Unexpected Offset index(-1) with pre/post-index mode");
         emitSafeMemDemoted(BaseRegIdx, Inst, STI);
         MCRegister Base = Inst.getOperand(BaseRegIdx).getReg();
-        if (Inst.getOperand(OffsetIdx).isReg()) {
-          emitRRRI(AArch64::ADDXrs, Base, Base, Inst.getOperand(OffsetIdx).getReg(), 0, STI);
+        MCOperand OffsetMO = Inst.getOperand(OffsetIdx);
+        if (OffsetMO.isReg()) {
+          // The immediate offset of post-indexed addressing NEON Instrs has a fixed value, and
+          // it is encoded as a post-index addressing with XZR register operand.
+          // e.g., LD3Threev3d_POST can only have #48 as its operand and its offset
+          // MachineOperand holds XZR, which is a *Register* kind, not Imm.
+          MCRegister OffReg = OffsetMO.getReg();
+          if (OffReg == AArch64::XZR) {
+            const LdStNInstrDesc *Info = getLdStNInstrDesc(Inst.getOpcode());
+            assert(Info && Info->NaturalOffset >= 0);
+            emitRRI0(AArch64::ADDXri, Base, Base, Info->NaturalOffset, STI);
+          } else {
+            assert(OffReg != AArch64::WZR);
+            emitRRRI(AArch64::ADDXrs, Base, Base, Inst.getOperand(OffsetIdx).getReg(), 0, STI);
+          }
         } else {
           auto Offset = Inst.getOperand(OffsetIdx).getImm() * getPrePostScale(Inst.getOpcode());
           if (Offset >= 0)

@@ -1,8 +1,7 @@
-#ifndef LLVM_LIB_TARGET_AARCH64_MCTARGETDESC_AARCH64MCINSTINFO_H
-#define LLVM_LIB_TARGET_AARCH64_MCTARGETDESC_AARCH64MCINSTINFO_H
+#ifndef LLVM_LIB_TARGET_AARCH64_AARCH64LFI_H
+#define LLVM_LIB_TARGET_AARCH64_AARCH64LFI_H
 
-#include "AArch64MCTargetDesc.h"
-#include "llvm/MC/MCInst.h"
+#include "MCTargetDesc/AArch64MCTargetDesc.h"
 
 using namespace llvm;
 
@@ -2300,5 +2299,4 @@ static bool isSafeIndBr(unsigned Opcode, MCRegister Reg) {
 }
 
 } // end namespace llvm
-
 #endif

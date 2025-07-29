@@ -16,6 +16,7 @@
 #include "AArch64InstrInfo.h"
 #include "AArch64MachineFunctionInfo.h"
 #include "AArch64Subtarget.h"
+#include "AArch64LFI.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "MCTargetDesc/AArch64InstPrinter.h"
 #include "llvm/ADT/BitVector.h"
@@ -524,9 +525,9 @@ AArch64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
 
   if (IsLFI) {
-    markSuperRegs(Reserved, AArch64::GPR32commonRegClass.getRegister(21)); // TODO: x28
-    markSuperRegs(Reserved, AArch64::GPR32commonRegClass.getRegister(18)); // TODO: x27
-    markSuperRegs(Reserved, AArch64::GPR32commonRegClass.getRegister(22)); // TODO: x26
+    markSuperRegs(Reserved, AArch64::GPR32commonRegClass.getRegister(28));
+    markSuperRegs(Reserved, AArch64::GPR32commonRegClass.getRegister(27));
+    markSuperRegs(Reserved, AArch64::GPR32commonRegClass.getRegister(26));
     if (!MF.getProperties().hasProperty(
             MachineFunctionProperties::Property::NoVRegs)) {
       markSuperRegs(Reserved, AArch64::LR);  // x30

@@ -7,9 +7,9 @@ using namespace llvm;
 
 namespace llvm {
   enum LFIReg {
-    AddrReg = AArch64::X18,
-    BaseReg = AArch64::X21,
-    ScratchReg = AArch64::X22,
+    AddrReg = AArch64::X28,
+    BaseReg = AArch64::X27,
+    ScratchReg = AArch64::X26,
   };
 
   struct MemInstInfo {
@@ -2295,12 +2295,12 @@ static bool isMemNoMaskAddr(unsigned Op) {
 }
 
 static bool isAddrReg(MCRegister Reg) {
-  return (Reg == AArch64::SP) || (Reg == AArch64::X18) || (Reg == AArch64::LR);
+  return (Reg == AArch64::SP) || (Reg == LFIReg::AddrReg) || (Reg == AArch64::LR);
 }
 
 static bool isSafeIndBr(unsigned Opcode, MCRegister Reg) {
-  return (Opcode == AArch64::BR && Reg == AArch64::X18)
-    || (Opcode == AArch64::BLR && (Reg == AArch64::LR || Reg == AArch64::X18))
+  return (Opcode == AArch64::BR && Reg == LFIReg::AddrReg)
+    || (Opcode == AArch64::BLR && (Reg == AArch64::LR || Reg == LFIReg::AddrReg))
     || (Opcode == AArch64::RET && Reg == AArch64::LR);
 }
 

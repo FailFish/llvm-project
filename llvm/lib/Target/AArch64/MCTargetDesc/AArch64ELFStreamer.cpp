@@ -14,7 +14,7 @@
 
 #include "AArch64ELFStreamer.h"
 #include "AArch64AddressingModes.h"
-#include "AArch64MCInstInfo.h"
+#include "AArch64LFI.h"
 #include "AArch64MCTargetDesc.h"
 #include "AArch64TargetStreamer.h"
 #include "llvm/ADT/DenseMap.h"
@@ -544,18 +544,18 @@ private:
     if (!MII.has_value()) {
       return false;
     }
-    if (definesReg(Inst, *MII, AArch64::LR) && Inst.getOperand(MII->BaseRegIdx).getReg() != AArch64::X21) {
-      emitLoadWithAltDestReg(Inst, *MII, AArch64::LR, AArch64::X22, STI);
-      emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    if (definesReg(Inst, *MII, AArch64::LR) && Inst.getOperand(MII->BaseRegIdx).getReg() != LFIReg::BaseReg) {
+      emitLoadWithAltDestReg(Inst, *MII, AArch64::LR, LFIReg::ScratchReg, STI);
+      emitRRRI(AArch64::ADDXrx, AArch64::LR, LFIReg::BaseReg, LFIReg::ScratchReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       return true;
     }
     // FIXME: handling Load X18, X21, <MemOp>
-    if (definesReg(Inst, *MII, AArch64::X18)) {
-      emitLoadWithAltDestReg(Inst, *MII, AArch64::X18, AArch64::XZR, STI);
+    if (definesReg(Inst, *MII, LFIReg::AddrReg)) {
+      emitLoadWithAltDestReg(Inst, *MII, LFIReg::AddrReg, AArch64::XZR, STI);
       return true;
     }
-    if (definesReg(Inst, *MII, AArch64::X21)) {
-      emitLoadWithAltDestReg(Inst, *MII, AArch64::X21, AArch64::XZR, STI);
+    if (definesReg(Inst, *MII, LFIReg::BaseReg)) {
+      emitLoadWithAltDestReg(Inst, *MII, LFIReg::BaseReg, AArch64::XZR, STI);
       return true;
     }
     return false;
@@ -564,14 +564,14 @@ private:
   void emitMemMask(unsigned int Opcode, MCRegister Rd, MCRegister Rt, const MCSubtargetInfo &STI) {
     MCRegister SafeRd = Rd;
     if (Rd == AArch64::LR)
-      SafeRd = AArch64::X22;
-    emitRRRI0(Opcode, SafeRd, AArch64::X21, Rt, AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0), STI);
+      SafeRd = LFIReg::ScratchReg;
+    emitRRRI0(Opcode, SafeRd, LFIReg::BaseReg, Rt, AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0), STI);
     if (Rd == AArch64::LR)
-      emitRRRI(AArch64::ADDXrx, Rd, AArch64::X21, SafeRd, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      emitRRRI(AArch64::ADDXrx, Rd, LFIReg::BaseReg, SafeRd, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitAddMask(MCRegister AddrReg, const MCSubtargetInfo &STI) {
-    emitRRRI(AArch64::ADDXrx, AArch64::X18, AArch64::X21, AddrReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    emitRRRI(AArch64::ADDXrx, LFIReg::AddrReg, LFIReg::BaseReg, AddrReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSafeMemDemoted(unsigned N, const MCInst &Inst, const MCSubtargetInfo &STI) {
@@ -581,7 +581,7 @@ private:
     SafeInst.setOpcode(NewOpCode);
     for (unsigned I = 1; I < N; I++)
       SafeInst.addOperand(Inst.getOperand(I));
-    SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
+    SafeInst.addOperand(MCOperand::createReg(LFIReg::AddrReg));
     if (IsPre)
       SafeInst.addOperand(Inst.getOperand(N + 1));
     else if (!IsBaseNoOffset)
@@ -595,7 +595,7 @@ private:
     for (unsigned I = 0; I < N; I++) {
       SafeInst.addOperand(Inst.getOperand(I));
     }
-    SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
+    SafeInst.addOperand(MCOperand::createReg(LFIReg::AddrReg));
     for (unsigned I = N + 1; I < Inst.getNumOperands(); I++)
       SafeInst.addOperand(Inst.getOperand(I));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
@@ -617,7 +617,7 @@ private:
     emitAddMask(Rt, STI);
     MCInst SafeInst;
     SafeInst.setOpcode(Opcode);
-    SafeInst.addOperand(MCOperand::createReg(AArch64::X18));
+    SafeInst.addOperand(MCOperand::createReg(LFIReg::AddrReg));
     AArch64ELFStreamer::emitInstruction(SafeInst, STI);
   }
 
@@ -632,16 +632,16 @@ private:
   };
 
   void emitRTCall(RTCallType CallType, const MCSubtargetInfo &STI) {
-    emitMov(AArch64::X22, AArch64::LR, STI);
+    emitMov(LFIReg::ScratchReg, AArch64::LR, STI);
     unsigned Offset;
     switch (CallType) {
     case RT_Syscall: Offset = 0; break;
     case RT_TLSRead: Offset = 1; break;
     case RT_TLSWrite: Offset = 2; break;
     }
-    emitRRI(AArch64::LDRXui, AArch64::LR, AArch64::X21, Offset, STI);
+    emitRRI(AArch64::LDRXui, AArch64::LR, LFIReg::BaseReg, Offset, STI);
     emitR(AArch64::BLR, AArch64::LR, STI);
-    emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+    emitRRRI(AArch64::ADDXrx, AArch64::LR, LFIReg::BaseReg, LFIReg::ScratchReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
   }
 
   void emitSyscall(const MCSubtargetInfo &STI) {
@@ -710,8 +710,8 @@ public:
     case AArch64::ANDXri:
       // and sp, x0, #0xfffffffffffffff0
       if (Inst.getOperand(0).getReg() == AArch64::SP) {
-        emitRRI(Inst.getOpcode(), AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), STI);
-        emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRI(Inst.getOpcode(), LFIReg::ScratchReg, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::SP, LFIReg::BaseReg, LFIReg::ScratchReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
@@ -719,8 +719,8 @@ public:
       // movz x30, #imm, lsl #shift
       // an alias of mov x30, #imm (AArch64::MOVXi doesn't exist)
       if (Inst.getOperand(0).getReg() == AArch64::LR) {
-        emitRII(Inst.getOpcode(), AArch64::X22, Inst.getOperand(1).getImm(), Inst.getOperand(2).getImm(), STI);
-        emitRRRI(AArch64::ADDXrx, AArch64::LR, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRII(Inst.getOpcode(), LFIReg::ScratchReg, Inst.getOperand(1).getImm(), Inst.getOperand(2).getImm(), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::LR, LFIReg::BaseReg, LFIReg::ScratchReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
@@ -730,13 +730,13 @@ public:
       // NOTE: different from the earlier lfi pass
       // either 1. not-sp-writing or 2. safe-sp-writing
       if (Reg != AArch64::SP ||
-          (Reg == AArch64::SP && Inst.getOperand(1).getReg() == AArch64::X21))
+          (Reg == AArch64::SP && Inst.getOperand(1).getReg() == LFIReg::BaseReg))
         break;
       if (Inst.getOperand(2).getImm() == 0) {
-        emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::SP, LFIReg::BaseReg, Inst.getOperand(1).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       } else {
-        emitRRII(Inst.getOpcode(), AArch64::X22, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), Inst.getOperand(3).getImm(), STI);
-        emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+        emitRRII(Inst.getOpcode(), LFIReg::ScratchReg, Inst.getOperand(1).getReg(), Inst.getOperand(2).getImm(), Inst.getOperand(3).getImm(), STI);
+        emitRRRI(AArch64::ADDXrx, AArch64::SP, LFIReg::BaseReg, LFIReg::ScratchReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       }
       return;
     case AArch64::ADDXrr:
@@ -750,16 +750,16 @@ public:
     case AArch64::SUBXrx64:
       Reg = Inst.getOperand(0).getReg();
       if (Reg != AArch64::SP ||
-          (Reg == AArch64::SP && Inst.getOperand(1).getReg() == AArch64::X21))
+          (Reg == AArch64::SP && Inst.getOperand(1).getReg() == LFIReg::BaseReg))
         break;
-      emitRRRI(Inst.getOpcode(), AArch64::X22, AArch64::SP, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
-      emitRRRI(AArch64::ADDXrx, AArch64::SP, AArch64::X21, AArch64::X22, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      emitRRRI(Inst.getOpcode(), LFIReg::ScratchReg, AArch64::SP, Inst.getOperand(2).getReg(), Inst.getOperand(3).getImm(), STI);
+      emitRRRI(AArch64::ADDXrx, AArch64::SP, LFIReg::BaseReg, LFIReg::ScratchReg, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
       return;
     case AArch64::ORRXrs:
       Reg = Inst.getOperand(0).getReg();
-      if ((Reg == AArch64::SP && Inst.getOperand(1).getReg() != AArch64::X21) ||
-          (Reg == AArch64::LR && Inst.getOperand(1).getReg() != AArch64::X21)) {
-        emitRRRI(AArch64::ADDXrx, Reg, AArch64::X21, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
+      if ((Reg == AArch64::SP && Inst.getOperand(1).getReg() != LFIReg::BaseReg) ||
+          (Reg == AArch64::LR && Inst.getOperand(1).getReg() != LFIReg::BaseReg)) {
+        emitRRRI(AArch64::ADDXrx, Reg, LFIReg::BaseReg, Inst.getOperand(2).getReg(), AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0), STI);
         return;
       }
       break;
@@ -793,7 +793,7 @@ public:
       auto BaseReg = Inst.getOperand(BaseRegIdx).getReg();
       auto OffsetMO = Inst.getOperand(OffsetIdx);
       // NOTE: Implicit scale 8 for LDRXui <imm12> field
-      if (DestReg == AArch64::LR && BaseReg == AArch64::X21 &&
+      if (DestReg == AArch64::LR && BaseReg == LFIReg::BaseReg &&
           (OffsetMO.isImm() && OffsetMO.getImm() < 32)) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
@@ -890,10 +890,10 @@ public:
       if (!IsShift)
         Shift = 0;
       if (Extend)
-        emitRRRI(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift), STI);
+        emitRRRI(AArch64::ADDXrx, LFIReg::ScratchReg, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift), STI);
       else
-        emitRRRI(AArch64::ADDXrs, AArch64::X22, Reg1, Reg2, AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift), STI);
-      emitMemMask(MemOp, Inst.getOperand(0).getReg(), AArch64::X22, STI);
+        emitRRRI(AArch64::ADDXrs, LFIReg::ScratchReg, Reg1, Reg2, AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift), STI);
+      emitMemMask(MemOp, Inst.getOperand(0).getReg(), LFIReg::ScratchReg, STI);
       return;
     }
     if ((MemOp = convertRoWToRoW(Inst.getOpcode(), Shift)) != AArch64::INSTRUCTION_LIST_END) {
@@ -902,17 +902,17 @@ public:
       int64_t S = Inst.getOperand(3).getImm();
       int64_t IsShift = Inst.getOperand(4).getImm();
       // NOTE: to avoid double instrumentation.
-      if (Reg1 == AArch64::X21) {
+      if (Reg1 == LFIReg::BaseReg) {
         AArch64ELFStreamer::emitInstruction(Inst, STI);
         return;
       }
       if (!IsShift)
         Shift = 0;
       if (S)
-        emitRRRI(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTW, Shift), STI);
+        emitRRRI(AArch64::ADDXrx, LFIReg::ScratchReg, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::SXTW, Shift), STI);
       else
-        emitRRRI(AArch64::ADDXrx, AArch64::X22, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, Shift), STI);
-      emitMemMask(MemOp, Inst.getOperand(0).getReg(), AArch64::X22, STI);
+        emitRRRI(AArch64::ADDXrx, LFIReg::ScratchReg, Reg1, Reg2, AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, Shift), STI);
+      emitMemMask(MemOp, Inst.getOperand(0).getReg(), LFIReg::ScratchReg, STI);
       return;
     }
 

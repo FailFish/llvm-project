@@ -6,6 +6,12 @@
 using namespace llvm;
 
 namespace llvm {
+  enum LFIReg {
+    AddrReg = AArch64::X18,
+    BaseReg = AArch64::X21,
+    ScratchReg = AArch64::X22,
+  };
+
   struct MemInstInfo {
     MemInstInfo() = default;
 

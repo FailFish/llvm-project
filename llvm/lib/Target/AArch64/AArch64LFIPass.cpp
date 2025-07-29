@@ -1,7 +1,7 @@
 #include "AArch64.h"
 #include "AArch64InstrInfo.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
-#include "MCTargetDesc/AArch64MCInstInfo.h"
+#include "AArch64LFI.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
@@ -104,7 +104,7 @@ MachineInstr *AArch64LFI::createAddXrx(MachineInstr &MI, Register DestReg, Regis
 }
 
 MachineInstr *AArch64LFI::createAddFromBase(MachineInstr &MI, Register DestReg, Register OffsetReg) {
-  return createAddXrx(MI, DestReg, AArch64::X21, OffsetReg);
+  return createAddXrx(MI, DestReg, LFIReg::BaseReg, OffsetReg);
 }
 
 MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRegIdx) {
@@ -114,7 +114,7 @@ MachineInstr *AArch64LFI::createSafeMemDemoted(MachineInstr &MI, unsigned BaseRe
 
   for (unsigned I = 1; I < BaseRegIdx; I++)
     MIB.add(MI.getOperand(I));
-  MIB.addReg(AArch64::X18);
+  MIB.addReg(LFIReg::AddrReg);
   if (IsPre)
     MIB.add(MI.getOperand(BaseRegIdx + 1));
   else if (!IsBaseNoOffset)
@@ -132,7 +132,7 @@ SmallVector<MachineInstr *, 2> AArch64LFI::createSafeMemN(MachineInstr &MI, unsi
     auto MO = MI.getOperand(I);
     MIB.add(MO);
   }
-  MIB.addReg(AArch64::X18);
+  MIB.addReg(LFIReg::AddrReg);
 
   for (unsigned I = BaseRegIdx + 1; I < MI.getNumOperands(); I++)
     MIB.add(MI.getOperand(I));
@@ -145,10 +145,10 @@ SmallVector<MachineInstr *, 2> AArch64LFI::createMemMask(MachineInstr &MI, unsig
   SmallVector<MachineInstr *, 2> Instrs;
   Register SafeRd = Rd;
   if (Rd == AArch64::LR)
-    SafeRd = AArch64::X22;
+    SafeRd = LFIReg::ScratchReg;
   MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), TII->get(NewOp))
     .addReg(SafeRd, IsLoad ? RegState::Define : 0)
-    .addReg(AArch64::X21)
+    .addReg(LFIReg::BaseReg)
     .addReg(getWRegFromXReg(Rt))
     .addImm(AArch64_AM::getMemExtendImm(AArch64_AM::UXTW, 0))
     .addImm(0);
@@ -217,17 +217,17 @@ bool AArch64LFI::handleLoadSpecialRegs(MachineInstr &MI) {
   std::optional<MemInstInfo> MII = getLoadInfo(MI.getOpcode());
   SmallVector<MachineInstr *> Insts;
 
-  if (definesReg(MI, *MII, AArch64::LR) && MI.getOperand(MII->BaseRegIdx).getReg() != AArch64::X21) {
-    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::LR, AArch64::X22);
-    MachineInstr *Add = createAddFromBase(MI, AArch64::LR, AArch64::X22);
+  if (definesReg(MI, *MII, AArch64::LR) && MI.getOperand(MII->BaseRegIdx).getReg() != LFIReg::BaseReg) {
+    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::LR, LFIReg::ScratchReg);
+    MachineInstr *Add = createAddFromBase(MI, AArch64::LR, LFIReg::ScratchReg);
     Insts.append({NewMI, Add});
   }
-  if (definesReg(MI, *MII, AArch64::X18)) {
-    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::X18, AArch64::XZR);
+  if (definesReg(MI, *MII, LFIReg::AddrReg)) {
+    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, LFIReg::AddrReg, AArch64::XZR);
     Insts.push_back(NewMI);
   }
-  if (definesReg(MI, *MII, AArch64::X21)) {
-    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, AArch64::X21, AArch64::XZR);
+  if (definesReg(MI, *MII, LFIReg::BaseReg)) {
+    MachineInstr *NewMI = createLoadWithAltDestReg(MI, *MII, LFIReg::BaseReg, AArch64::XZR);
     Insts.push_back(NewMI);
   }
   if (Insts.empty()) {
@@ -240,7 +240,7 @@ bool AArch64LFI::handleLoadSpecialRegs(MachineInstr &MI) {
 }
 
 SmallVector<MachineInstr *, 4> AArch64LFI::createRTCall(RTCallType Ty, MachineInstr &MI) {
-  MachineInstr *Mov = createMov(MI, AArch64::X22, AArch64::LR);
+  MachineInstr *Mov = createMov(MI, LFIReg::ScratchReg, AArch64::LR);
 
   auto Offset = 0;
   switch (Ty) {
@@ -251,13 +251,13 @@ SmallVector<MachineInstr *, 4> AArch64LFI::createRTCall(RTCallType Ty, MachineIn
 
   // ldr x30, [x21]
   MachineInstr *Load = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDRXui), AArch64::LR)
-    .addReg(AArch64::X21)
+    .addReg(LFIReg::BaseReg)
     .addImm(Offset);
   // blr x30
   MachineInstr *Blr = BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::BLR))
     .addReg(AArch64::LR);
   // add x30, x21, w22, uxtw
-  MachineInstr *Add = createAddFromBase(MI, AArch64::LR, AArch64::X22);
+  MachineInstr *Add = createAddFromBase(MI, AArch64::LR, LFIReg::ScratchReg);
 
   return {Mov, Load, Blr, Add};
 }
@@ -322,8 +322,8 @@ bool AArch64LFI::handleIndBr(MachineInstr &MI) {
     return false;
   }
 
-  MachineInstr *MaskMI = createAddFromBase(MI, AArch64::X18, Reg);
-  MO.setReg(AArch64::X18);
+  MachineInstr *MaskMI = createAddFromBase(MI, LFIReg::AddrReg, Reg);
+  MO.setReg(LFIReg::AddrReg);
 
   insertMIs(MI, {MaskMI});
 
@@ -345,7 +345,7 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
     auto BaseReg = MI.getOperand(BaseRegIdx).getReg();
     auto OffsetMO = MI.getOperand(OffsetIdx);
     // NOTE: Implicit scale 8 for LDRXui <imm12> field
-    if (DestReg == AArch64::LR && BaseReg == AArch64::X21 &&
+    if (DestReg == AArch64::LR && BaseReg == LFIReg::BaseReg &&
         (OffsetMO.isImm() && OffsetMO.getImm() < 32)) {
       return false;
     }
@@ -357,7 +357,7 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
       return false;
     }
     SmallVector<MachineInstr *, 2> Instrs;
-    MachineInstr *Mask = createAddFromBase(MI, AArch64::X18, BaseReg);
+    MachineInstr *Mask = createAddFromBase(MI, LFIReg::AddrReg, BaseReg);
     Instrs.push_back(Mask);
 
     if (IsPrePost) {
@@ -424,7 +424,7 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
       auto MaskChain = createMemMask(MI, MemOp, DestReg, BaseReg, IsDestDef);
       Instrs.append(MaskChain);
     } else {
-      MachineInstr *Mask = createAddFromBase(MI, AArch64::X18, BaseReg);
+      MachineInstr *Mask = createAddFromBase(MI, LFIReg::AddrReg, BaseReg);
       Instrs.push_back(Mask);
       auto SafeMem = createSafeMemN(MI, BaseRegIdx);
       Instrs.append(SafeMem);
@@ -493,14 +493,14 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
 
     MachineInstr *Fixup =
         BuildMI(*MF, MI.getDebugLoc(), TII->get(Extend ? AArch64::ADDXrx : AArch64::ADDXrs))
-            .addReg(AArch64::X22)
+            .addReg(LFIReg::ScratchReg)
             .addReg(BaseReg)
             .addReg(OffsetReg)
             .addImm(
                 Extend ? AArch64_AM::getArithExtendImm(AArch64_AM::SXTX, Shift)
                        : AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift));
     Instrs.push_back(Fixup);
-    auto MaskChain = createMemMask(MI, MemOp, DestReg, AArch64::X22, IsDestDef);
+    auto MaskChain = createMemMask(MI, MemOp, DestReg, LFIReg::ScratchReg, IsDestDef);
     Instrs.append(MaskChain);
   }
   if ((MemOp = convertRoWToRoW(MI.getOpcode(), Shift)) != AArch64::INSTRUCTION_LIST_END) {
@@ -515,14 +515,14 @@ bool AArch64LFI::handleLoadStore(MachineInstr &MI) {
 
     MachineInstr *Fixup =
         BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
-            .addReg(AArch64::X22)
+            .addReg(LFIReg::ScratchReg)
             .addReg(BaseReg)
             .addReg(OffsetReg)
             .addImm(
                 S ? AArch64_AM::getArithExtendImm(AArch64_AM::SXTW, Shift)
                        : AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, Shift));
     Instrs.push_back(Fixup);
-    auto MaskChain = createMemMask(MI, MemOp, DestReg, AArch64::X22, IsDestDef);
+    auto MaskChain = createMemMask(MI, MemOp, DestReg, LFIReg::ScratchReg, IsDestDef);
     Instrs.append(MaskChain);
   }
 
@@ -565,10 +565,10 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
     case AArch64::ANDXri:
       // and sp, x0, #0xfffffffffffffff0
       if (MI.getOperand(0).getReg() == AArch64::SP) {
-        MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
+        MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), LFIReg::ScratchReg)
           .add(MI.getOperand(1))
           .add(MI.getOperand(2));
-        MachineInstr *Guard = createAddFromBase(MI, AArch64::SP, AArch64::X22);
+        MachineInstr *Guard = createAddFromBase(MI, AArch64::SP, LFIReg::ScratchReg);
         insertMIs(MI, {NewMI, Guard});
         MI.eraseFromParent();
       }
@@ -577,10 +577,10 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
       // movz x30, #imm, lsl #shift
       // an alias of mov x30, #imm (AArch64::MOVXi doesn't exist)
       if (MI.getOperand(0).getReg() == AArch64::LR) {
-        MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
+        MachineInstr *NewMI = BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), LFIReg::ScratchReg)
           .add(MI.getOperand(1))
           .add(MI.getOperand(2));
-        MachineInstr *Guard = createAddFromBase(MI, AArch64::SP, AArch64::X22);
+        MachineInstr *Guard = createAddFromBase(MI, AArch64::SP, LFIReg::ScratchReg);
         insertMIs(MI, {NewMI, Guard});
         MI.eraseFromParent();
       }
@@ -598,12 +598,12 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
         MI.eraseFromParent();
       } else {
         MachineInstr *NewMI =
-          BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
+          BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), LFIReg::ScratchReg)
           .addReg(MI.getOperand(1).getReg())
           .addImm(MI.getOperand(2).getImm())
           .addImm(MI.getOperand(3).getImm());
         MachineInstr *Guard =
-          createAddFromBase(MI, AArch64::SP, AArch64::X22);
+          createAddFromBase(MI, AArch64::SP, LFIReg::ScratchReg);
         insertMIs(MI, {NewMI, Guard});
         MI.eraseFromParent();
       }
@@ -622,12 +622,12 @@ bool AArch64LFI::runOnMachineInstr(MachineInstr &MI) {
         break;
       {
         MachineInstr *NewMI =
-          BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), AArch64::X22)
+          BuildMI(*MF, MI.getDebugLoc(), MI.getDesc(), LFIReg::ScratchReg)
           .addReg(AArch64::SP)
           .addReg(MI.getOperand(2).getReg())
           .addImm(MI.getOperand(3).getImm());
         MachineInstr *Guard =
-          createAddFromBase(MI, AArch64::SP, AArch64::X22);
+          createAddFromBase(MI, AArch64::SP, LFIReg::ScratchReg);
         insertMIs(MI, {NewMI, Guard});
         MI.eraseFromParent();
       }
@@ -704,13 +704,13 @@ FunctionPass *llvm::createAArch64LFIPass() {
 //       case AArch64::LDRXui:
 //         if (isAddrReg(MI.getOperand(1).getReg()) && MI.getOperand(0).getReg() == AArch64::LR) {
 //           BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDRXui))
-//             .addReg(AArch64::X22)
+//             .addReg(LFIReg::ScratchReg)
 //             .addReg(MI.getOperand(1).getReg())
 //             .addImm(MI.getOperand(2).getImm());
 //           BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //             .addReg(AArch64::LR)
-//             .addReg(AArch64::X21)
-//             .addReg(AArch64::X22)
+//             .addReg(LFIReg::BaseReg)
+//             .addReg(LFIReg::ScratchReg)
 //             .addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //         }
 //         break;
@@ -718,13 +718,13 @@ FunctionPass *llvm::createAArch64LFIPass() {
 //         if (isAddrReg(MI.getOperand(2).getReg()) && MI.getOperand(1).getReg() == AArch64::LR) {
 //           BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDRXpre))
 //             .addReg(MI.getOperand(0).getReg())
-//             .addReg(AArch64::X22)
+//             .addReg(LFIReg::ScratchReg)
 //             .addReg(MI.getOperand(2).getReg())
 //             .addImm(MI.getOperand(3).getImm());
 //           BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //             .addReg(AArch64::LR)
-//             .addReg(AArch64::X21)
-//             .addReg(AArch64::X22)
+//             .addReg(LFIReg::BaseReg)
+//             .addReg(LFIReg::ScratchReg)
 //             .addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //         }
 //         break;
@@ -732,13 +732,13 @@ FunctionPass *llvm::createAArch64LFIPass() {
 //         if (isAddrReg(MI.getOperand(2).getReg()) && MI.getOperand(1).getReg() == AArch64::LR) {
 //           BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDRXpost))
 //             .addReg(MI.getOperand(0).getReg())
-//             .addReg(AArch64::X22)
+//             .addReg(LFIReg::ScratchReg)
 //             .addReg(MI.getOperand(2).getReg())
 //             .addImm(MI.getOperand(3).getImm());
 //           BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //             .addReg(AArch64::LR)
-//             .addReg(AArch64::X21)
-//             .addReg(AArch64::X22)
+//             .addReg(LFIReg::BaseReg)
+//             .addReg(LFIReg::ScratchReg)
 //             .addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //         }
 //         break;
@@ -746,26 +746,26 @@ FunctionPass *llvm::createAArch64LFIPass() {
 //         if (isAddrReg(MI.getOperand(2).getReg())) {
 //           if (MI.getOperand(0).getReg() == AArch64::LR) {
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDPXi))
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(MI.getOperand(1).getReg())
 //               .addReg(MI.getOperand(2).getReg())
 //               .addImm(MI.getOperand(3).getImm());
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //               .addReg(AArch64::LR)
-//               .addReg(AArch64::X21)
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::BaseReg)
+//               .addReg(LFIReg::ScratchReg)
 //               .addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //           }
 //           if (MI.getOperand(1).getReg() == AArch64::LR) {
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDPXi))
 //               .addReg(MI.getOperand(0).getReg())
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(MI.getOperand(2).getReg())
 //               .addImm(MI.getOperand(3).getImm());
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //               .addReg(AArch64::LR)
-//               .addReg(AArch64::X21)
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::BaseReg)
+//               .addReg(LFIReg::ScratchReg)
 //               .addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //           }
 //         }
@@ -775,27 +775,27 @@ FunctionPass *llvm::createAArch64LFIPass() {
 //           if (MI.getOperand(1).getReg() == AArch64::LR) {
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDPXpre))
 //               .addReg(MI.getOperand(0).getReg())
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(MI.getOperand(2).getReg())
 //               .addReg(MI.getOperand(3).getReg())
 //               .addImm(MI.getOperand(4).getImm());
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //               .addReg(AArch64::LR)
-//               .addReg(AArch64::X21)
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::BaseReg)
+//               .addReg(LFIReg::ScratchReg)
 //               .addImm(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //           }
 //           if (MI.getOperand(2).getReg() == AArch64::LR) {
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDPXpre))
 //               .addReg(MI.getOperand(0).getReg())
 //               .addReg(MI.getOperand(1).getReg())
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(MI.getOperand(3).getReg())
 //               .addImm(MI.getOperand(4).getImm());
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //               .addReg(AArch64::LR)
-//               .addReg(AArch64::X21)
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::BaseReg)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //           }
 //         }
@@ -805,27 +805,27 @@ FunctionPass *llvm::createAArch64LFIPass() {
 //           if (MI.getOperand(1).getReg() == AArch64::LR) {
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDPXpost))
 //               .addReg(MI.getOperand(0).getReg())
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(MI.getOperand(2).getReg())
 //               .addReg(MI.getOperand(3).getReg())
 //               .addImm(MI.getOperand(4).getImm());
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //               .addReg(AArch64::LR)
-//               .addReg(AArch64::X21)
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::BaseReg)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //           }
 //           if (MI.getOperand(2).getReg() == AArch64::LR) {
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::LDPXpost))
 //               .addReg(MI.getOperand(0).getReg())
 //               .addReg(MI.getOperand(1).getReg())
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(MI.getOperand(3).getReg())
 //               .addImm(MI.getOperand(4).getImm());
 //             BuildMI(*MF, MI.getDebugLoc(), TII->get(AArch64::ADDXrx))
 //               .addReg(AArch64::LR)
-//               .addReg(AArch64::X21)
-//               .addReg(AArch64::X22)
+//               .addReg(LFIReg::BaseReg)
+//               .addReg(LFIReg::ScratchReg)
 //               .addReg(AArch64_AM::getArithExtendImm(AArch64_AM::UXTW, 0));
 //           }
 //         }
@@ -841,7 +841,7 @@ FunctionPass *llvm::createAArch64LFIPass() {
   if (isAddrReg(MI.getOperand(BaseRegIdx).getReg())
       && MI.getOperand(DestRegIdx).getReg() == AArch64::LR) {
     BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
-      .addReg(AArch64::X22)
+      .addReg(LFIReg::ScratchReg)
       .addReg(MI.getOperand(BaseRegIdx).getReg())
       .addImm(MI.getOperand(OffsetIdx).getImm());
     Changed = true;
@@ -855,7 +855,7 @@ FunctionPass *llvm::createAArch64LFIPass() {
   if (isAddrReg(MI.getOperand(BaseRegIdx).getReg())) {
     if (MI.getOperand(DestRegIdx).getReg() == AArch64::LR) {
       BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
-        .addReg(AArch64::X22)
+        .addReg(LFIReg::ScratchReg)
         .addReg(MI.getOperand(DestRegIdx + 1).getReg())
         .addReg(MI.getOperand(BaseRegIdx).getReg())
         .addImm(MI.getOperand(OffsetIdx).getImm());
@@ -864,7 +864,7 @@ FunctionPass *llvm::createAArch64LFIPass() {
     if (MI.getOperand(DestRegIdx + 1).getReg() == AArch64::LR) {
       BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
         .addReg(MI.getOperand(DestRegIdx).getReg())
-        .addReg(AArch64::X22)
+        .addReg(LFIReg::ScratchReg)
         .addReg(MI.getOperand(BaseRegIdx).getReg())
         .addImm(MI.getOperand(OffsetIdx).getImm());
       Changed = true;
@@ -880,7 +880,7 @@ FunctionPass *llvm::createAArch64LFIPass() {
       && MI.getOperand(1).getReg() == AArch64::LR) {
     BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
       .addReg(MI.getOperand(BaseRegIdx).getReg())
-      .addReg(AArch64::X22)
+      .addReg(LFIReg::ScratchReg)
       .addReg(MI.getOperand(BaseRegIdx).getReg())
       .addImm(MI.getOperand(OffsetIdx).getImm());
   }
@@ -894,7 +894,7 @@ FunctionPass *llvm::createAArch64LFIPass() {
     if (MI.getOperand(DestRegIdx).getReg() == AArch64::LR) {
       BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
         .addReg(MI.getOperand(BaseRegIdx).getReg())
-        .addReg(AArch64::X22)
+        .addReg(LFIReg::ScratchReg)
         .addReg(MI.getOperand(DestRegIdx + 1).getReg())
         .addReg(MI.getOperand(BaseRegIdx).getReg())
         .addImm(MI.getOperand(OffsetIdx).getImm());
@@ -903,7 +903,7 @@ FunctionPass *llvm::createAArch64LFIPass() {
       BuildMI(*MF, MI.getDebugLoc(), MI.getDesc())
         .addReg(MI.getOperand(BaseRegIdx).getReg())
         .addReg(MI.getOperand(DestRegIdx).getReg())
-        .addReg(AArch64::X22)
+        .addReg(LFIReg::ScratchReg)
         .addReg(MI.getOperand(BaseRegIdx).getReg())
         .addImm(MI.getOperand(OffsetIdx).getImm());
     }

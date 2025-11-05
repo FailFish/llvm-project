@@ -403,17 +403,32 @@ void MCObjectStreamer::emitInstruction(const MCInst &Inst,
   // If this instruction doesn't need relaxation, just emit it as data.
   MCAssembler &Assembler = getAssembler();
   MCAsmBackend &Backend = Assembler.getBackend();
+
+  // To enable better bundle-nop optimization, we emits every instruction
+  // as a relaxable fragment.
+  if (Assembler.isBundlingEnabled()) {
+    if (Sec->isBundleLocked() || Assembler.getRelaxAll()) {
+      // Is there any benefit if locked instructions are relax later.
+      MCInst Relaxed = Inst;
+      while (Backend.mayNeedRelaxation(Relaxed.getOpcode(), Relaxed.getOperands(),
+                                       STI))
+        Backend.relaxInstruction(Relaxed, STI);
+      emitInstToFragment(Relaxed, STI);
+    } else {
+      emitInstToFragment(Inst, STI);
+    }
+    return;
+  }
+
   if (!(Backend.mayNeedRelaxation(Inst.getOpcode(), Inst.getOperands(), STI) ||
-        Backend.allowEnhancedRelaxation() ||
-        Assembler.isBundlingEnabled())) {
+        Backend.allowEnhancedRelaxation())) {
     emitInstToData(Inst, STI);
     return;
   }
 
   // Otherwise, relax and emit it as data if RelaxAll is specified.
   // Also, any instruction inside a bundle lock gets relaxed early.
-  if (Assembler.getRelaxAll() ||
-      (Assembler.isBundlingEnabled() && Sec->isBundleLocked())) {
+  if (Assembler.getRelaxAll()) {
     MCInst Relaxed = Inst;
     while (Backend.mayNeedRelaxation(Relaxed.getOpcode(), Relaxed.getOperands(),
                                      STI))

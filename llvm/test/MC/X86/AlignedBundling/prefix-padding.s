@@ -63,18 +63,30 @@ ignore_pad_out_of_p2align:
 # CHECK-NEXT:   a1: int3
 # CHECK-NEXT:   a2: nop
 # CHECK:        b0: int3
-# CHECK-NEXT:   b1: int3
-# CHECK-NEXT:   b2: int3
-# CHECK-NEXT:   b3: nop
+# CHECK-NEXT:   b4: int3
+# CHECK-NEXT:   ba: int3
 
-  .p2align 5
+# instructions inside a bundle lock can also be prefix-padded.
+pad_locked_insts:
+  .bundle_lock
+  callq   bar
+  callq   bar
+  callq   bar
+  callq   bar
+  callq   bar
+  callq   bar
+  .bundle_unlock
+  # only the last callq gets prefix padded.
+# CHECK:        d4: call
+# CHECK-NEXT:   d9: call
+
 # There is no need to optimize the last bundle because following nops are not meant to be executed.
 last_bundle:
   callq   bar
   .bundle_lock
   callq   bar
   .bundle_unlock
-# CHECK:        c0: call
-# CHECK-NEXT:   c5: call
+# CHECK:        e0: call
+# CHECK-NEXT:   e5: call
 
 # TODO: relative-pc fixup boundary overflow test

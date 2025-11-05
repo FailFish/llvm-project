@@ -489,6 +489,9 @@ void X86AsmBackend::emitInstructionBeginBundle(MCObjectStreamer &OS) {
   assert(OS.getAssembler().isBundlingEnabled());
 
   if (OS.getCurrentSectionOnly()->isBundleLocked()) {
+    // TODO: this setAllowAutoPadding might be better if we set by emitInst*.
+    // Because with bundling you want to enable this always.
+    OS.getCurrentFragment()->setAllowAutoPadding(true);
     return;
   }
   PendingBA = OS.newSpecialFragment<MCBoundaryAlignFragment>(
@@ -508,7 +511,7 @@ void X86AsmBackend::emitInstructionEndBundle(MCObjectStreamer &OS) {
 
   if (OS.getCurrentSectionOnly()->isBundleLocked()) {
     // we're still inside the lock, do not close the current fragment with BA.
-    assert(CF->getSize() != 0 && "A bundle-Locked fragment must contain at least one instruction");
+    // assert(CF->getSize() != 0 && "A bundle-Locked fragment must contain at least one instruction");
     return;
   }
   assert(PendingBA && "MCBoundaryAlignFragment is expected for every instruction if it is not bundle-locked");
@@ -517,7 +520,7 @@ void X86AsmBackend::emitInstructionEndBundle(MCObjectStreamer &OS) {
   PendingBA->setLastFragment(CF);
   PendingBA = nullptr;
 
-  OS.newFragment();
+  // OS.newFragment();
 
   CF->getParent()->ensureMinAlignment(
       Align(OS.getAssembler().getBundleAlignSize()));
@@ -979,6 +982,9 @@ bool X86AsmBackend::dividePadInBundle(const MCAssembler &Asm, ArrayRef<MCFragmen
   }
   Relaxable.clear();
 
+  if (CrossBoundary)
+    RemainingSize += EndOffset % Asm.getBundleAlignSize();
+
   TotalHandledBundles++;
   if(RemainingSize == 0)
     EliminatedNops++;
@@ -986,9 +992,7 @@ bool X86AsmBackend::dividePadInBundle(const MCAssembler &Asm, ArrayRef<MCFragmen
   // FT_Align sizes will be recalculated by layoutSection(),
   // FT_BoundaryAlign sizes are adjusted here.
   if (auto *BF = dyn_cast<MCBoundaryAlignFragment>(LastF)) {
-    BF->setSize(CrossBoundary
-                    ? (RemainingSize + EndOffset % Asm.getBundleAlignSize())
-                    : RemainingSize);
+    BF->setSize(RemainingSize);
   }
 
   return Changed;

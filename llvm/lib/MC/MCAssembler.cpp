@@ -1006,7 +1006,9 @@ bool MCAssembler::relaxFragment(MCFragment &F) {
   default:
     return false;
   case MCFragment::FT_Relaxable:
-    assert(!getRelaxAll() && "Did not expect a FT_Relaxable in RelaxAll mode");
+    // bundling emits every instruction as relaxable, so
+    // FT_Relaxable is expected with RelaxAll mode once bundling is enabled.
+    assert((isBundlingEnabled() || !getRelaxAll()) && "Did not expect a FT_Relaxable in RelaxAll mode");
     relaxInstruction(F);
     break;
   case MCFragment::FT_LEB:

@@ -367,8 +367,6 @@ void MCELFStreamer::emitBundleUnlock(const MCSubtargetInfo &STI) {
     report_fatal_error(".bundle_unlock forbidden when bundling is disabled");
   else if (!isBundleLocked())
     report_fatal_error(".bundle_unlock without matching lock");
-  else if (getCurrentFragment()->getSize() > getAssembler().getBundleAlignSize())
-    report_fatal_error("Fragment can't be larger than a bundle size");
 
   Sec.exitBundleLock();
 
@@ -379,7 +377,17 @@ void MCELFStreamer::emitBundleUnlock(const MCSubtargetInfo &STI) {
 
   MCFragment *CF = getCurrentFragment();
   BundleBA->setLastFragment(CF);
+  // bundle overflow check
+  uint64_t AlignedSize = 0;
+  for (const MCFragment *F = BundleBA->getNext();; F = F->getNext()) {
+    AlignedSize += getAssembler().computeFragmentSize(*F);
+    if (F == BundleBA->getLastFragment())
+      break;
+  }
   BundleBA = nullptr;
+
+  if (AlignedSize > getAssembler().getBundleAlignSize())
+    report_fatal_error("Fragment can't be larger than a bundle size");
 
   newFragment();
 

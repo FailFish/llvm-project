@@ -982,18 +982,42 @@ bool X86AsmBackend::dividePadInBundle(const MCAssembler &Asm, ArrayRef<MCFragmen
   }
   Relaxable.clear();
 
-  if (CrossBoundary)
-    RemainingSize += EndOffset % Asm.getBundleAlignSize();
+  if (!CrossBoundary && RemainingSize > 0) {
+    if (EndOffset % Asm.getBundleAlignSize() != 0) {
+      // there are following instructions inside the bundle
+      auto *BF = cast<MCBoundaryAlignFragment>(LastF);
+      for (auto *F = BF->getNext();; F = F->getNext()) {
+        if (F->getKind() == MCFragment::FT_Relaxable) {
+          Changed |= padInstructionEncoding(*F, Asm.getEmitter(), RemainingSize);
+        }
+        if (F == BF->getLastFragment() || RemainingSize == 0)
+          break;
+      }
+    }
+  } else if (CrossBoundary && (EndOffset % Asm.getBundleAlignSize()) > 0) {
+    // there are following instructions on the next bundle.
+    unsigned NextRemainingSize = EndOffset % Asm.getBundleAlignSize();
+    auto *BF = cast<MCBoundaryAlignFragment>(LastF);
+    for (auto *F = BF->getNext();; F = F->getNext()) {
+      if (F->getKind() == MCFragment::FT_Relaxable) {
+        Changed |= padInstructionEncoding(*F, Asm.getEmitter(), NextRemainingSize);
+      }
+      if (F == BF->getLastFragment() || NextRemainingSize == 0)
+        break;
+    }
 
-  TotalHandledBundles++;
-  if(RemainingSize == 0)
-    EliminatedNops++;
+    RemainingSize += NextRemainingSize;
+  }
 
   // FT_Align sizes will be recalculated by layoutSection(),
   // FT_BoundaryAlign sizes are adjusted here.
   if (auto *BF = dyn_cast<MCBoundaryAlignFragment>(LastF)) {
     BF->setSize(RemainingSize);
   }
+
+  TotalHandledBundles++;
+  if (RemainingSize == 0)
+    EliminatedNops++;
 
   return Changed;
 }

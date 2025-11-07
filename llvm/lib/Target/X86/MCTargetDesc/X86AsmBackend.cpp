@@ -496,6 +496,7 @@ void X86AsmBackend::emitInstructionBeginBundle(MCObjectStreamer &OS) {
   }
   PendingBA = OS.newSpecialFragment<MCBoundaryAlignFragment>(
       Align(OS.getAssembler().getBundleAlignSize()), STI);
+  PendingBA->setLastFragment(OS.getCurrentFragment());
 
   OS.getCurrentFragment()->setAllowAutoPadding(true);
 }
@@ -517,7 +518,7 @@ void X86AsmBackend::emitInstructionEndBundle(MCObjectStreamer &OS) {
   assert(PendingBA && "MCBoundaryAlignFragment is expected for every instruction if it is not bundle-locked");
 
   // Tie the aligned instructions into a pending BoundaryAlign.
-  PendingBA->setLastFragment(CF);
+  // PendingBA->setLastFragment(CF);
   PendingBA = nullptr;
 
   // OS.newFragment();

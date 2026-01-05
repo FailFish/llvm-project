@@ -2,91 +2,68 @@
 # RUN:   | llvm-objdump -d --no-show-raw-insn - | FileCheck %s
 
   .text
-ensure_two_bundles:
+add_prefix_prev:
   .bundle_align_mode 5
 # This callq instruction is 5 bytes long
   callq   bar
   callq   bar
   callq   bar
   callq   bar
+  .bundle_lock align_to_end
+  callq   bar
+  .bundle_unlock
 # CHECK:        0:  call
 # CHECK-NEXT:   5:  call
-# CHECK-NEXT:   c:  call
-# CHECK-NEXT:   16:  call
+# CHECK-NEXT:   a:  call
+# CHECK-NEXT:   11:  call
+# CHECK-NEXT:   1b:  call
+
+  .p2align 5
+add_prefix_prev_next:
+  callq   bar
   .bundle_lock align_to_end
-  callq   bar
-  callq   bar
+  # instructions inside a bundle lock can also be prefix-padded.
   callq   bar
   .bundle_unlock
-# Current implementation cannot consume following nops using instructions in the previous bundle.
-# CHECK:        20: nop
+# CHECK:        20: call
 # CHECK-NEXT:   2a: nop
-# CHECK-NEXT:   31: callq
+# CHECK:        36: call
 
   .p2align 5
-a_bundle_with_align_to_end:
-  callq   bar
-# CHECK:        40: call
-# CHECK-NEXT:   4a: nop
-  .bundle_lock align_to_end
-# CHECK:        5b: call
-  callq   bar
-  .bundle_unlock
-
-  .p2align 5
-no_mid_nops:
-  callq   bar
-  callq   bar
-  callq   bar
-  callq   bar
-  .bundle_lock
-  callq   bar
-  callq   bar
-  callq   bar
-  .bundle_unlock
-# CHECK:        76: call
-# CHECK-NEXT:   80: call
-# CHECK-NEXT:   85: call
-
-  .p2align 5
-ignore_pad_out_of_p2align:
+ignore_nop_for_p2align:
   int3
   int3
-  # no optimization for this 14-byte nop.
+  # no prefix padding with this 14-byte nop.
   .p2align 4
   int3
   .bundle_lock
   int3
   .bundle_unlock
   int3
-# CHECK:        a0: int3
-# CHECK-NEXT:   a1: int3
-# CHECK-NEXT:   a2: nop
-# CHECK:        b0: int3
-# CHECK-NEXT:   b4: int3
-# CHECK-NEXT:   ba: int3
+# CHECK:        40: int3
+# CHECK-NEXT:   41: int3
+# CHECK-NEXT:   42: nop
+# CHECK:        50: int3
+# CHECK-NEXT:   51: int3
+# CHECK-NEXT:   52: int3
+# CHECK-NEXT:   53: nop
 
-# instructions inside a bundle lock can also be prefix-padded.
-pad_locked_insts:
-  .bundle_lock
+  .p2align 5
+ignore_nop_for_p2align5:
   callq   bar
+  .p2align 5
+.L1:
   callq   bar
-  callq   bar
-  callq   bar
-  callq   bar
-  callq   bar
-  .bundle_unlock
-  # only the last callq gets prefix padded.
-# CHECK:        d4: call
-# CHECK-NEXT:   d9: call
+# CHECK:        60: call
+# CHECK-NEXT:   65: nop
+# CHECK:        80: call
 
-# There is no need to optimize the last bundle because following nops are not meant to be executed.
-last_bundle:
-  callq   bar
+# ensure the last instructions are not prefix-padded
+  .p2align 5
+tail_bundle:
   .bundle_lock
   callq   bar
   .bundle_unlock
-# CHECK:        e0: call
-# CHECK-NEXT:   e5: call
-
-# TODO: relative-pc fixup boundary overflow test
+  nop
+# CHECK:        a0: call
+# CHECK-NEXT:   a5: nop

@@ -483,14 +483,12 @@ void X86_MC::emitInstruction(MCObjectStreamer &S, const MCInst &Inst,
 }
 
 /// if the upcoming instruction is inside the bundle lock, do nothing so that
-/// the OS emits the instruction to the same fragment. if not, it creates a new
-/// PendingBA, which will be appended by emitInstructionEndBundle()
+/// the ObjectStreamer emits the instruction to the current fragment. if not, it
+/// creates a new BA to group bundled fragments
 void X86AsmBackend::emitInstructionBeginBundle(MCObjectStreamer &OS) {
   assert(OS.getAssembler().isBundlingEnabled());
 
   if (OS.getCurrentSectionOnly()->isBundleLocked()) {
-    // TODO: this setAllowAutoPadding might be better if we set by emitInst*.
-    // Because with bundling you want to enable this always.
     OS.getCurrentFragment()->setAllowAutoPadding(true);
     return;
   }

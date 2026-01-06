@@ -5814,7 +5814,7 @@ bool AsmParser::parseDirectiveBundleLock() {
 }
 
 /// parseDirectiveBundleLock
-/// ::= {.bundle_lock}
+/// ::= {.bundle_unlock}
 bool AsmParser::parseDirectiveBundleUnlock() {
   if (checkForValidSection() || parseEOL())
     return true;

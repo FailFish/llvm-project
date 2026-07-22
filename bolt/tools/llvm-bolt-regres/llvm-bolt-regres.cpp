@@ -65,9 +65,9 @@ static cl::opt<std::string>
                cl::init(""), cl::cat(RegResCategory));
 
 static cl::opt<bool>
-    SpareRegs("spare-regs",
-              cl::desc("Attempt to spare R11, R14, R15 registers using liveness analysis"),
-              cl::init(true), cl::cat(RegResCategory));
+    NoSpareRegs("no-spare-regs",
+              cl::desc("Disable attempting to spare a set of registers using liveness analysis"),
+              cl::init(false), cl::cat(RegResCategory));
 
 static cl::opt<bool>
     PrintCfg("print-asm-cfg",
@@ -337,7 +337,7 @@ void ObjectRewriteInstance::buildFunctionsCFG() {
 }
 
 void ObjectRewriteInstance::runOptimizationPasses() {
-  if (!opts::SpareRegs)
+  if (opts::NoSpareRegs)
     return;
 
   SmallVector<std::string, 4> TargetRegs(opts::SpareTargetRegsOpt.begin(),
@@ -371,6 +371,9 @@ Error ObjectRewriteInstance::run() {
     printCFGs(outs());
 
   runOptimizationPasses();
+
+  if (opts::PrintCfg)
+    printCFGs(outs());
 
   return Error::success();
 }

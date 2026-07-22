@@ -1,4 +1,4 @@
-//===- bolt/tools/llvm-bolt-obj-cfg/SpareRegisters.h -----------*- C++ -*-===//
+//===- bolt/tools/llvm-bolt-regres/SpareRegisters.h -----------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 //
 // Pipeline Manager Pass orchestrating register reallocation strategies in cost
-// hierarchy order: DirectRegRealloc -> ArgRegRealloc -> CalleeRegRealloc ->
-// ArgCalleeRegRealloc.
+// hierarchy order with cross-pass cached web reuse:
+// DirectRegRealloc -> ArgRegRealloc -> CalleeRegRealloc -> ArgCalleeRegRealloc.
 //
 //===----------------------------------------------------------------------===//
 
@@ -47,6 +47,7 @@ public:
       : TargetRegNames(std::move(TargetRegs)), StrategyMode(Mode) {}
 
   void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info);
+  bool runOnFunction(BinaryFunction &Function, RegAnalysis &RA);
   Error runOnFunctions(BinaryContext &BC);
 };
 

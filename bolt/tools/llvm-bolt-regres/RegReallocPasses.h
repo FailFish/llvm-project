@@ -1,4 +1,4 @@
-//===- bolt/tools/llvm-bolt-obj-cfg/RegReallocPasses.h --------*- C++ -*-===//
+//===- bolt/tools/llvm-bolt-regres/RegReallocPasses.h --------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,11 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Independently Instantiable Register Reallocation Passes:
-//   1. DirectRegRealloc       (0-cost local operand renaming)
-//   2. ArgRegRealloc          (Argument entry eviction: mov r_cand, r_arg)
-//   3. CalleeRegRealloc       (Callee-saved shift with prologue/epilogue CFI)
-//   4. ArgCalleeRegRealloc    (Argument callee-saved eviction)
+// Independently Instantiable Register Reallocation Passes supporting
+// single-analysis batch planning and cross-pass cached web reuse.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,11 +20,18 @@
 #include "bolt/Passes/DataflowInfoManager.h"
 #include "bolt/Passes/RegAnalysis.h"
 #include "llvm/Support/Error.h"
+#include <map>
 #include <string>
 #include <vector>
 
 namespace llvm {
 namespace bolt {
+
+struct ReallocPlanItem {
+  RegisterWeb Web;
+  MCPhysReg TargetReg;
+  MCPhysReg CandidateReg;
+};
 
 // Base class for Register Reallocation Passes
 class RegReallocPassBase {
@@ -44,6 +48,12 @@ public:
   virtual StringRef getName() const = 0;
 
   void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info);
+
+  // Single-Analysis Batch Planning: Accepts pre-extracted cached webs map
+  bool runWithCachedWebs(BinaryFunction &Function,
+                         const std::map<MCPhysReg, std::vector<RegisterWeb>> &CachedWebs,
+                         RegisterWebExtractor &Extractor);
+
   bool runOnFunction(BinaryFunction &Function, RegAnalysis &RA);
   Error runOnFunctions(BinaryContext &BC);
 };

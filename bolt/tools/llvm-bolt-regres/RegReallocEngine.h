@@ -1,4 +1,4 @@
-//===- bolt/tools/llvm-bolt-obj-cfg/RegReallocEngine.h ---------*- C++ -*-===//
+//===- bolt/tools/llvm-bolt-regres/RegReallocEngine.h ---------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // Unified Core Engine for Register Reallocation / Sparing Passes.
+// Separates candidate search (planning) from code mutation (application).
 //
 //===----------------------------------------------------------------------===//
 
@@ -33,17 +34,23 @@ struct RegReallocOptions {
 
 class RegReallocEngine {
 public:
-  // Attempts to reallocate a single def-use web W of TargetReg using Options.
-  // Returns true if reallocation succeeded.
-  static bool reallocateWeb(BinaryFunction &BF, RegisterWeb &W,
-                            MCPhysReg TargetReg, const RegReallocOptions &Opts,
-                            RegisterWebExtractor &Extractor,
-                            const BitVector &GPRegs,
-                            const BitVector &CalleeSavedRegs,
-                            const BitVector &CandidatePool,
-                            const BitVector &UsedInFunction,
-                            const std::vector<size_t> &RankedRegs,
-                            const BitVector &ABIArgRegs);
+  // Planning Phase: Finds an available, non-interfering candidate register for W.
+  // Returns candidate MCPhysReg, or 0 if no valid candidate exists.
+  static MCPhysReg findCandidate(BinaryFunction &BF, const RegisterWeb &W,
+                                 MCPhysReg TargetReg,
+                                 const RegReallocOptions &Opts,
+                                 RegisterWebExtractor &Extractor,
+                                 const BitVector &GPRegs,
+                                 const BitVector &CalleeSavedRegs,
+                                 const BitVector &CandidatePool,
+                                 const BitVector &UsedInFunction,
+                                 const std::vector<size_t> &RankedRegs,
+                                 const BitVector &ABIArgRegs);
+
+  // Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.
+  static void applyReallocation(BinaryFunction &BF, const RegisterWeb &W,
+                                MCPhysReg TargetReg, MCPhysReg CandidateReg,
+                                const RegReallocOptions &Opts);
 };
 
 } // namespace bolt

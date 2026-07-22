@@ -1,4 +1,4 @@
-//===- bolt/tools/llvm-bolt-obj-cfg/RegReallocPasses.cpp ------*- C++ -*-===//
+//===- bolt/tools/llvm-bolt-regres/RegReallocPasses.cpp ------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegReallocPassBase.
+// Implementation of RegReallocPassBase with Single-Analysis Batch Planning.
 //
 //===----------------------------------------------------------------------===//
 
@@ -73,7 +73,10 @@ void RegReallocPassBase::printLiveness(BinaryFunction &BF, DataflowInfoManager &
   }
 }
 
-bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
+bool RegReallocPassBase::runWithCachedWebs(
+    BinaryFunction &Function,
+    const std::map<MCPhysReg, std::vector<RegisterWeb>> &CachedWebs,
+    RegisterWebExtractor &Extractor) {
   BinaryContext &BC = Function.getBinaryContext();
 
   BitVector GPRegs(BC.MRI->getNumRegs(), false);
@@ -99,10 +102,6 @@ bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA
   CandidatePool |= BC.MIB->getAliases(BC.MIB->getFramePointer(), false);
   CandidatePool.flip();
 
-  DataflowInfoManager Info(Function, &RA, nullptr);
-  RegisterWebExtractor Extractor(Function, Info);
-
-  std::vector<int64_t> RegScore(BC.MRI->getNumRegs(), 0);
   std::vector<size_t> RankedRegs(BC.MRI->getNumRegs());
   std::iota(RankedRegs.begin(), RankedRegs.end(), 0);
 
@@ -141,24 +140,64 @@ bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA
     }
   }
 
-  bool AnyChanged = false;
+  // 1. Single-Analysis Planning Phase: Build ReallocPlan for all eligible webs
+  std::vector<ReallocPlanItem> Plan;
 
   for (MCPhysReg SparedReg : TargetSparedRegs) {
     BitVector SparedAliases = BC.MIB->getAliases(SparedReg, false);
     if (!UsedInFunction.anyCommon(SparedAliases))
       continue;
 
-    std::vector<RegisterWeb> Webs = Extractor.extractWebs(SparedReg);
-    for (RegisterWeb &W : Webs) {
-      if (RegReallocEngine::reallocateWeb(
-              Function, W, SparedReg, Opts, Extractor, GPRegs, CalleeSavedRegs,
-              CandidatePool, UsedInFunction, RankedRegs, ABIArgRegs)) {
-        AnyChanged = true;
+    auto It = CachedWebs.find(SparedReg);
+    if (It == CachedWebs.end())
+      continue;
+
+    for (const RegisterWeb &W : It->second) {
+      MCPhysReg CandReg = RegReallocEngine::findCandidate(
+          Function, W, SparedReg, Opts, Extractor, GPRegs, CalleeSavedRegs,
+          CandidatePool, UsedInFunction, RankedRegs, ABIArgRegs);
+
+      if (CandReg != 0) {
+        Plan.push_back({W, SparedReg, CandReg});
       }
     }
   }
 
-  return AnyChanged;
+  // If no webs match strategy criteria, return false (0 changes made)
+  if (Plan.empty())
+    return false;
+
+  // 2. Batch Mutation Phase: Apply planned reallocations
+  for (const ReallocPlanItem &Item : Plan) {
+    RegReallocEngine::applyReallocation(Function, Item.Web, Item.TargetReg,
+                                        Item.CandidateReg, Opts);
+  }
+
+  return true;
+}
+
+bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
+  DataflowInfoManager Info(Function, &RA, nullptr);
+  RegisterWebExtractor Extractor(Function, Info);
+
+  BitVector SpareTargetRegs(Function.getBinaryContext().MRI->getNumRegs(), false);
+  for (const std::string &TargetRegName : TargetRegNames) {
+    for (unsigned R = 1; R < Function.getBinaryContext().MRI->getNumRegs(); ++R) {
+      if (StringRef(Function.getBinaryContext().MRI->getName(R)).equals_insensitive(TargetRegName)) {
+        SpareTargetRegs |= Function.getBinaryContext().MIB->getAliases(R, false);
+        break;
+      }
+    }
+  }
+
+  std::map<MCPhysReg, std::vector<RegisterWeb>> CachedWebs;
+  for (unsigned R = 1; R < Function.getBinaryContext().MRI->getNumRegs(); ++R) {
+    if (SpareTargetRegs.test(R) && Function.getBinaryContext().MIB->getRegSize(R) == 8) {
+      CachedWebs[R] = Extractor.extractWebs(R);
+    }
+  }
+
+  return runWithCachedWebs(Function, CachedWebs, Extractor);
 }
 
 Error RegReallocPassBase::runOnFunctions(BinaryContext &BC) {

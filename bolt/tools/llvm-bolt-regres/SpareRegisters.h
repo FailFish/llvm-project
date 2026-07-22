@@ -1,0 +1,56 @@
+//===- bolt/tools/llvm-bolt-obj-cfg/SpareRegisters.h -----------*- C++ -*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// Pipeline Manager Pass orchestrating register reallocation strategies in cost
+// hierarchy order: DirectRegRealloc -> ArgRegRealloc -> CalleeRegRealloc ->
+// ArgCalleeRegRealloc.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef BOLT_TOOLS_LLVM_BOLT_OBJ_CFG_SPAREREGISTERS_H
+#define BOLT_TOOLS_LLVM_BOLT_OBJ_CFG_SPAREREGISTERS_H
+
+#include "RegReallocPasses.h"
+#include "bolt/Core/BinaryContext.h"
+#include "bolt/Core/BinaryFunction.h"
+#include "bolt/Passes/DataflowInfoManager.h"
+#include "bolt/Passes/RegAnalysis.h"
+#include "llvm/Support/Error.h"
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace llvm {
+namespace bolt {
+
+enum class SpareStrategyMode {
+  DirectSwap,        // DirectRegRealloc
+  ArgEviction,       // ArgRegRealloc
+  CalleeShift,       // CalleeRegRealloc
+  ArgCalleeEviction, // ArgCalleeRegRealloc
+  All                // Run all strategies in cost order
+};
+
+class SpareRegisters {
+private:
+  std::vector<std::string> TargetRegNames;
+  SpareStrategyMode StrategyMode;
+
+public:
+  SpareRegisters(std::vector<std::string> TargetRegs = {"R11", "R14", "R15"},
+                 SpareStrategyMode Mode = SpareStrategyMode::All)
+      : TargetRegNames(std::move(TargetRegs)), StrategyMode(Mode) {}
+
+  void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info);
+  Error runOnFunctions(BinaryContext &BC);
+};
+
+} // namespace bolt
+} // namespace llvm
+
+#endif // BOLT_TOOLS_LLVM_BOLT_OBJ_CFG_SPAREREGISTERS_H

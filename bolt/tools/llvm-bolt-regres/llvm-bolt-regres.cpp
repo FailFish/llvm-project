@@ -14,10 +14,14 @@
 #include "bolt/Core/BinaryBasicBlock.h"
 #include "bolt/Core/BinaryContext.h"
 #include "bolt/Core/BinaryFunction.h"
+#include "bolt/Core/MCPlus.h"
 #include "bolt/Core/MCPlusBuilder.h"
 #include "bolt/Core/Relocation.h"
+#include "bolt/Passes/DataflowInfoManager.h"
+#include "bolt/Passes/RegAnalysis.h"
 #include "bolt/Rewrite/RewriteInstance.h"
 #include "bolt/Utils/CommandLineOpts.h"
+#include "bolt/Utils/Utils.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -41,26 +45,52 @@
 #include <string>
 #include <vector>
 
+#include "SpareRegisters.h"
+
 using namespace llvm;
 using namespace object;
 using namespace bolt;
 
 namespace opts {
 
-static cl::OptionCategory ObjCFGCategory("BOLT Object CFG Dump Options");
+static cl::OptionCategory RegResCategory("llvm-bolt-regres Register Reallocation Options");
 
 static cl::opt<std::string>
     InputFilename(cl::Positional, cl::desc("<input object file (.o)>"),
-                  cl::Required, cl::cat(ObjCFGCategory));
+                  cl::Required, cl::cat(RegResCategory));
 
 static cl::opt<std::string>
     FilterFunc("filter-func",
                cl::desc("Only print CFG for functions matching this string"),
-               cl::init(""), cl::cat(ObjCFGCategory));
+               cl::init(""), cl::cat(RegResCategory));
+
+static cl::opt<bool>
+    SpareRegs("spare-regs",
+              cl::desc("Attempt to spare R11, R14, R15 registers using liveness analysis"),
+              cl::init(true), cl::cat(RegResCategory));
+
+static cl::opt<bool>
+    PrintLiveness("print-liveness",
+                  cl::desc("Print LiveIn and LiveOut register sets for basic blocks"),
+                  cl::init(false), cl::cat(RegResCategory));
+
+static cl::opt<SpareStrategyMode> SpareStrategyOpt(
+    "spare-strategy", cl::desc("Strategy for register sparing/reallocation"),
+    cl::values(
+        clEnumValN(SpareStrategyMode::DirectSwap, "direct-swap", "DirectRegRealloc: 0-cost local operand swap"),
+        clEnumValN(SpareStrategyMode::ArgEviction, "arg-eviction", "ArgRegRealloc: Volatile Entry Eviction"),
+        clEnumValN(SpareStrategyMode::CalleeShift, "callee-shift", "CalleeRegRealloc: Callee-Saved Shift"),
+        clEnumValN(SpareStrategyMode::ArgCalleeEviction, "arg-callee-eviction", "ArgCalleeRegRealloc: Argument Callee Eviction"),
+        clEnumValN(SpareStrategyMode::All, "all", "Run all strategies in cost order (default)")),
+    cl::init(SpareStrategyMode::All), cl::cat(RegResCategory));
+
+static cl::list<std::string> SpareTargetRegsOpt(
+    "spare-target-regs", cl::desc("Target registers to spare (comma-separated or repeated)"),
+    cl::CommaSeparated, cl::cat(RegResCategory));
 
 } // namespace opts
 
-static StringRef ToolName = "llvm-bolt-obj-cfg";
+static StringRef ToolName = "llvm-bolt-regres";
 
 static void reportError(StringRef Message, Error E) {
   errs() << ToolName << ": '" << Message << "': " << toString(std::move(E))
@@ -307,7 +337,27 @@ void ObjectRewriteInstance::buildFunctionsCFG() {
 }
 
 void ObjectRewriteInstance::runOptimizationPasses() {
-  // Placeholder for future optimization and transformation passes
+  if (opts::PrintLiveness) {
+    RegAnalysis RA(*BC, &BC->getBinaryFunctions(), nullptr);
+    SpareRegisters Pass;
+    for (auto &BFI : BC->getBinaryFunctions()) {
+      BinaryFunction &BF = BFI.second;
+      if (!BF.isSimple() || BF.isIgnored() || BF.empty())
+        continue;
+      DataflowInfoManager Info(BF, &RA, nullptr);
+      Pass.printLiveness(BF, Info);
+    }
+  }
+
+  if (!opts::SpareRegs)
+    return;
+
+  std::vector<std::string> TargetRegs = opts::SpareTargetRegsOpt;
+  if (TargetRegs.empty())
+    TargetRegs = {"R11", "R14", "R15"};
+
+  SpareRegisters Pass(TargetRegs, opts::SpareStrategyOpt);
+  cantFail(Pass.runOnFunctions(*BC));
 }
 
 void ObjectRewriteInstance::printCFGs(raw_ostream &OS) {
@@ -328,7 +378,7 @@ Error ObjectRewriteInstance::run() {
   disassembleFunctions();
   buildFunctionsCFG();
   runOptimizationPasses();
-  printCFGs(outs());
+  // printCFGs(outs());
 
   return Error::success();
 }

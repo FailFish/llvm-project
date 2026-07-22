@@ -1,5 +1,5 @@
 # RUN: llvm-mc -filetype=obj -triple x86_64-unknown-unknown %s -o %t.o
-# RUN: llvm-bolt-regres --spare-regs --spare-target-regs=RSI --spare-strategy=direct-swap %t.o 2>&1 | FileCheck %s
+# RUN: llvm-bolt-regres --spare-target-regs=RSI --spare-strategy=direct-swap %t.o 2>&1 | FileCheck %s
 
 # CHECK: [SUCCESS_REALLOCATED] Reallocated RSI
 

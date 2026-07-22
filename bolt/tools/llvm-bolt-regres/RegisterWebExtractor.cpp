@@ -15,6 +15,7 @@
 #include "bolt/Core/MCPlusBuilder.h"
 #include <map>
 #include <queue>
+#include <set>
 
 namespace llvm {
 namespace bolt {
@@ -143,7 +144,6 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
     }
 
     // 4. Compute LiveAtEntry, CrossesCallSite, and Instructions for web W
-    // LiveAtEntry
     for (const BinaryBasicBlock *BB : W.Blocks) {
       if (BB == &*BF.begin() || BB->pred_size() == 0) {
         ProgramPoint FirstPP =
@@ -155,10 +155,8 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
       }
     }
 
-    // CrossesCallSite and Instructions
     for (const BinaryBasicBlock *BB : W.Blocks) {
       for (MCInst &Inst : const_cast<BinaryBasicBlock &>(*BB)) {
-        // Check if instruction uses or defines Reg
         bool MentionsReg = false;
         for (const MCOperand &Op : MCPlus::primeOperands(Inst)) {
           if (Op.isReg() && RegAliases.test(Op.getReg())) {
@@ -186,7 +184,6 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
         if (MentionsReg)
           W.Instructions.push_back(&Inst);
 
-        // Check call site crossing
         if (BC.MIB->isCall(Inst)) {
           ErrorOr<const BitVector &> StateBefore = LA.getStateAt(Inst);
           ErrorOr<const BitVector &> StateAfter = LA.getStateBefore(Inst);
@@ -209,7 +206,6 @@ bool RegisterWebExtractor::isLiveDuringWeb(MCRegister CandReg,
   BitVector CandAliases = BC.MIB->getAliases(CandReg, /*OnlySmaller=*/false);
 
   for (const BinaryBasicBlock *BB : W.Blocks) {
-
     for (const MCInst &Inst : *BB) {
       ErrorOr<const BitVector &> StateBefore = LA.getStateAt(Inst);
       if (StateBefore && StateBefore->anyCommon(CandAliases))

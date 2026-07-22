@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegReallocPassBase with Single-Analysis Batch Planning.
+// Implementation of RegReallocPassBase.
 //
 //===----------------------------------------------------------------------===//
 
@@ -75,7 +75,7 @@ void RegReallocPassBase::printLiveness(BinaryFunction &BF, DataflowInfoManager &
 
 bool RegReallocPassBase::runWithCachedWebs(
     BinaryFunction &Function,
-    const std::map<MCPhysReg, std::vector<RegisterWeb>> &CachedWebs,
+    const CachedWebsMap &CachedWebs,
     RegisterWebExtractor &Extractor) {
   BinaryContext &BC = Function.getBinaryContext();
 
@@ -102,7 +102,7 @@ bool RegReallocPassBase::runWithCachedWebs(
   CandidatePool |= BC.MIB->getAliases(BC.MIB->getFramePointer(), false);
   CandidatePool.flip();
 
-  std::vector<size_t> RankedRegs(BC.MRI->getNumRegs());
+  SmallVector<size_t, 16> RankedRegs(BC.MRI->getNumRegs());
   std::iota(RankedRegs.begin(), RankedRegs.end(), 0);
 
   BitVector UsedInFunction(BC.MRI->getNumRegs(), false);
@@ -130,7 +130,7 @@ bool RegReallocPassBase::runWithCachedWebs(
     }
   }
 
-  std::vector<MCPhysReg> TargetSparedRegs;
+  SmallVector<MCPhysReg, 4> TargetSparedRegs;
   for (const std::string &Name : TargetRegNames) {
     for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
       if (StringRef(BC.MRI->getName(R)).equals_insensitive(Name)) {
@@ -141,7 +141,7 @@ bool RegReallocPassBase::runWithCachedWebs(
   }
 
   // 1. Single-Analysis Planning Phase: Build ReallocPlan for all eligible webs
-  std::vector<ReallocPlanItem> Plan;
+  SmallVector<ReallocPlanItem, 4> Plan;
 
   for (MCPhysReg SparedReg : TargetSparedRegs) {
     BitVector SparedAliases = BC.MIB->getAliases(SparedReg, false);
@@ -190,7 +190,7 @@ bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA
     }
   }
 
-  std::map<MCPhysReg, std::vector<RegisterWeb>> CachedWebs;
+  CachedWebsMap CachedWebs;
   for (unsigned R = 1; R < Function.getBinaryContext().MRI->getNumRegs(); ++R) {
     if (SpareTargetRegs.test(R) && Function.getBinaryContext().MIB->getRegSize(R) == 8) {
       CachedWebs[R] = Extractor.extractWebs(R);

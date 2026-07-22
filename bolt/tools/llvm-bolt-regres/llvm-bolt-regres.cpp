@@ -340,7 +340,8 @@ void ObjectRewriteInstance::runOptimizationPasses() {
   if (!opts::SpareRegs)
     return;
 
-  std::vector<std::string> TargetRegs = opts::SpareTargetRegsOpt;
+  SmallVector<std::string, 4> TargetRegs(opts::SpareTargetRegsOpt.begin(),
+                                         opts::SpareTargetRegsOpt.end());
   if (TargetRegs.empty())
     TargetRegs = {"R11", "R14", "R15"};
 

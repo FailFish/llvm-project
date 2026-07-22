@@ -19,10 +19,10 @@
 #include "bolt/Core/BinaryContext.h"
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Passes/RegAnalysis.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCRegister.h"
-#include <string>
-#include <vector>
 
 namespace llvm {
 namespace bolt {
@@ -44,7 +44,7 @@ public:
                                  const BitVector &CalleeSavedRegs,
                                  const BitVector &CandidatePool,
                                  const BitVector &UsedInFunction,
-                                 const std::vector<size_t> &RankedRegs,
+                                 ArrayRef<size_t> RankedRegs,
                                  const BitVector &ABIArgRegs);
 
   // Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.

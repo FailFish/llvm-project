@@ -19,8 +19,11 @@
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Passes/DataflowInfoManager.h"
 #include "bolt/Passes/RegAnalysis.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
-#include <map>
 #include <string>
 #include <vector>
 
@@ -33,15 +36,17 @@ struct ReallocPlanItem {
   MCPhysReg CandidateReg;
 };
 
+using CachedWebsMap = DenseMap<MCPhysReg, std::vector<RegisterWeb>>;
+
 // Base class for Register Reallocation Passes
 class RegReallocPassBase {
 protected:
-  std::vector<std::string> TargetRegNames;
+  SmallVector<std::string, 4> TargetRegNames;
   RegReallocOptions Opts;
 
 public:
-  RegReallocPassBase(std::vector<std::string> TargetRegs, RegReallocOptions Options)
-      : TargetRegNames(std::move(TargetRegs)), Opts(Options) {}
+  RegReallocPassBase(ArrayRef<std::string> TargetRegs, RegReallocOptions Options)
+      : TargetRegNames(TargetRegs.begin(), TargetRegs.end()), Opts(Options) {}
 
   virtual ~RegReallocPassBase() = default;
 
@@ -51,7 +56,7 @@ public:
 
   // Single-Analysis Batch Planning: Accepts pre-extracted cached webs map
   bool runWithCachedWebs(BinaryFunction &Function,
-                         const std::map<MCPhysReg, std::vector<RegisterWeb>> &CachedWebs,
+                         const CachedWebsMap &CachedWebs,
                          RegisterWebExtractor &Extractor);
 
   bool runOnFunction(BinaryFunction &Function, RegAnalysis &RA);
@@ -61,8 +66,8 @@ public:
 // 1. DirectRegRealloc: 0-cost local operand swap (!LiveAtEntry, !CrossesCallSite)
 class DirectRegRealloc : public RegReallocPassBase {
 public:
-  DirectRegRealloc(std::vector<std::string> TargetRegs = {"R11", "R14", "R15"})
-      : RegReallocPassBase(std::move(TargetRegs), RegReallocOptions{false, false}) {}
+  DirectRegRealloc(ArrayRef<std::string> TargetRegs = {"R11", "R14", "R15"})
+      : RegReallocPassBase(TargetRegs, RegReallocOptions{false, false}) {}
 
   StringRef getName() const override { return "DirectRegRealloc"; }
 };
@@ -70,8 +75,8 @@ public:
 // 2. ArgRegRealloc: Volatile Entry Eviction (LiveAtEntry, !CrossesCallSite)
 class ArgRegRealloc : public RegReallocPassBase {
 public:
-  ArgRegRealloc(std::vector<std::string> TargetRegs = {"R11", "R14", "R15"})
-      : RegReallocPassBase(std::move(TargetRegs), RegReallocOptions{true, false}) {}
+  ArgRegRealloc(ArrayRef<std::string> TargetRegs = {"R11", "R14", "R15"})
+      : RegReallocPassBase(TargetRegs, RegReallocOptions{true, false}) {}
 
   StringRef getName() const override { return "ArgRegRealloc"; }
 };
@@ -79,8 +84,8 @@ public:
 // 3. CalleeRegRealloc: Callee-Saved Register Shift (!LiveAtEntry, CrossesCallSite)
 class CalleeRegRealloc : public RegReallocPassBase {
 public:
-  CalleeRegRealloc(std::vector<std::string> TargetRegs = {"R11", "R14", "R15"})
-      : RegReallocPassBase(std::move(TargetRegs), RegReallocOptions{false, true}) {}
+  CalleeRegRealloc(ArrayRef<std::string> TargetRegs = {"R11", "R14", "R15"})
+      : RegReallocPassBase(TargetRegs, RegReallocOptions{false, true}) {}
 
   StringRef getName() const override { return "CalleeRegRealloc"; }
 };
@@ -88,8 +93,8 @@ public:
 // 4. ArgCalleeRegRealloc: Argument Callee-Saved Eviction (LiveAtEntry, CrossesCallSite)
 class ArgCalleeRegRealloc : public RegReallocPassBase {
 public:
-  ArgCalleeRegRealloc(std::vector<std::string> TargetRegs = {"R11", "R14", "R15"})
-      : RegReallocPassBase(std::move(TargetRegs), RegReallocOptions{true, true}) {}
+  ArgCalleeRegRealloc(ArrayRef<std::string> TargetRegs = {"R11", "R14", "R15"})
+      : RegReallocPassBase(TargetRegs, RegReallocOptions{true, true}) {}
 
   StringRef getName() const override { return "ArgCalleeRegRealloc"; }
 };

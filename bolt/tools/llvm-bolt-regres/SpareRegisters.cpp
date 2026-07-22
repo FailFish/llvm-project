@@ -6,8 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of SpareRegisters pipeline orchestrator with cross-pass
-// cached web reuse.
+// Implementation of SpareRegisters pipeline orchestrator.
 //
 //===----------------------------------------------------------------------===//
 
@@ -26,7 +25,7 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
   BinaryContext &BC = Function.getBinaryContext();
 
   BitVector SpareTargetRegs(BC.MRI->getNumRegs(), false);
-  std::vector<MCPhysReg> TargetSparedRegs;
+  SmallVector<MCPhysReg, 4> TargetSparedRegs;
   for (const std::string &Name : TargetRegNames) {
     for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
       if (StringRef(BC.MRI->getName(R)).equals_insensitive(Name)) {
@@ -37,7 +36,7 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
     }
   }
 
-  std::vector<std::unique_ptr<RegReallocPassBase>> EnabledPasses;
+  SmallVector<std::unique_ptr<RegReallocPassBase>, 4> EnabledPasses;
 
   if (StrategyMode == SpareStrategyMode::DirectSwap || StrategyMode == SpareStrategyMode::All)
     EnabledPasses.push_back(std::make_unique<DirectRegRealloc>(TargetRegNames));
@@ -57,7 +56,7 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
   std::unique_ptr<RegisterWebExtractor> Extractor =
       std::make_unique<RegisterWebExtractor>(Function, *Info);
 
-  std::map<MCPhysReg, std::vector<RegisterWeb>> CachedWebs;
+  CachedWebsMap CachedWebs;
   for (MCPhysReg Reg : TargetSparedRegs)
     CachedWebs[Reg] = Extractor->extractWebs(Reg);
 

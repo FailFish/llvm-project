@@ -20,10 +20,11 @@
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Passes/DataflowInfoManager.h"
 #include "bolt/Passes/RegAnalysis.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Error.h"
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace llvm {
 namespace bolt {
@@ -38,13 +39,13 @@ enum class SpareStrategyMode {
 
 class SpareRegisters {
 private:
-  std::vector<std::string> TargetRegNames;
+  SmallVector<std::string, 4> TargetRegNames;
   SpareStrategyMode StrategyMode;
 
 public:
-  SpareRegisters(std::vector<std::string> TargetRegs = {"R11", "R14", "R15"},
+  SpareRegisters(ArrayRef<std::string> TargetRegs = {"R11", "R14", "R15"},
                  SpareStrategyMode Mode = SpareStrategyMode::All)
-      : TargetRegNames(std::move(TargetRegs)), StrategyMode(Mode) {}
+      : TargetRegNames(TargetRegs.begin(), TargetRegs.end()), StrategyMode(Mode) {}
 
   void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info);
   bool runOnFunction(BinaryFunction &Function, RegAnalysis &RA);

@@ -28,7 +28,7 @@ MCPhysReg RegReallocEngine::findCandidate(
     const RegReallocOptions &Opts, RegisterWebExtractor &Extractor,
     const BitVector &GPRegs, const BitVector &CalleeSavedRegs,
     const BitVector &CandidatePool, const BitVector &UsedInFunction,
-    const std::vector<size_t> &RankedRegs, const BitVector &ABIArgRegs) {
+    ArrayRef<size_t> RankedRegs, const BitVector &ABIArgRegs) {
 
   BinaryContext &BC = BF.getBinaryContext();
   BitVector TargetAliases = BC.MIB->getAliases(TargetReg, false);
@@ -54,19 +54,15 @@ MCPhysReg RegReallocEngine::findCandidate(
     bool IsCalleeSaved = CalleeSavedRegs.test(RegIdx);
     bool IsABIArg = ABIArgRegs.anyCommon(CandAliases);
 
-    // If strategy requires callee-saved, candidate must be callee-saved
     if (Opts.ShiftCalleeSaved && !IsCalleeSaved)
       continue;
 
-    // If strategy does NOT shift callee-saved, candidate must be volatile or unused callee-saved
     if (!Opts.ShiftCalleeSaved && IsCalleeSaved && UsedInFunction.anyCommon(CandAliases))
       continue;
 
-    // For entry eviction, candidate must not be an ABI parameter register carrying inputs
     if (Opts.EvictEntryArg && IsABIArg)
       continue;
 
-    // Candidate must not be live during this web
     bool IsUsedInFunc = UsedInFunction.anyCommon(CandAliases);
     if (IsUsedInFunc && Extractor.isLiveDuringWeb(RegIdx, W))
       continue;

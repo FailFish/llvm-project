@@ -1,4 +1,4 @@
-//===- bolt/tools/llvm-bolt-obj-cfg/RegisterWebExtractor.cpp ---*- C++ -*-===//
+//===- bolt/tools/llvm-bolt-regres/RegisterWebExtractor.cpp ---*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,24 +6,29 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegisterWebExtractor for def-use web extraction and LLVM priority calculation.
+// Implementation of RegisterWebExtractor for physical registers.
 //
 //===----------------------------------------------------------------------===//
 
 #include "RegisterWebExtractor.h"
+#include "bolt/Core/BinaryBasicBlock.h"
+#include "bolt/Core/BinaryContext.h"
+#include "bolt/Core/BinaryFunction.h"
 #include "bolt/Core/BinaryLoop.h"
 #include "bolt/Core/MCPlus.h"
 #include "bolt/Core/MCPlusBuilder.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cmath>
-#include <map>
 #include <queue>
-#include <set>
+
+#define DEBUG_TYPE "spare-regs"
 
 namespace llvm {
 namespace bolt {
 
 bool RegisterWebExtractor::isRegActiveInBB(const BinaryBasicBlock &BB,
-                                           const BitVector &RegAliases) const {
+                                            const BitVector &RegAliases) const {
   // Check LiveIn
   ProgramPoint FirstPP =
       ProgramPoint::getFirstPointAt(const_cast<BinaryBasicBlock &>(BB));
@@ -73,23 +78,19 @@ bool RegisterWebExtractor::isRegLiveAcrossEdge(
   ProgramPoint FromLast =
       ProgramPoint::getLastPointAt(const_cast<BinaryBasicBlock &>(From));
   ErrorOr<const BitVector &> FromState = LA.getStateAt(FromLast);
-  if (!FromState || !FromState->anyCommon(RegAliases))
-    return false;
 
   ProgramPoint ToFirst =
       ProgramPoint::getFirstPointAt(const_cast<BinaryBasicBlock &>(To));
   ErrorOr<const BitVector &> ToState = LA.getStateAt(ToFirst);
-  if (!ToState || !ToState->anyCommon(RegAliases))
-    return false;
 
-  return true;
+  if (FromState && ToState)
+    return FromState->anyCommon(RegAliases) && ToState->anyCommon(RegAliases);
+
+  return false;
 }
 
 std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
   std::vector<RegisterWeb> Webs;
-  if (BF.empty())
-    return Webs;
-
   BitVector RegAliases = BC.MIB->getAliases(Reg, /*OnlySmaller=*/false);
   BitVector ABIArgRegs = BC.MIB->getRegsUsedAsParams();
   bool IsABIArgReg = RegAliases.anyCommon(ABIArgRegs);
@@ -119,6 +120,7 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
   }
 
   // 3. Find connected components (webs)
+  unsigned WebIDCounter = 0;
   std::set<const BinaryBasicBlock *> Visited;
   for (const BinaryBasicBlock *StartBB : ActiveBlocks) {
     if (Visited.count(StartBB))
@@ -214,6 +216,7 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
     if (W.Instructions.empty())
       continue;
 
+    W.WebID = WebIDCounter++;
     W.Priority = ExecutionCost / W.Instructions.size();
     Webs.push_back(std::move(W));
   }

@@ -56,18 +56,14 @@ FunctionRegContext FunctionRegContext::create(
 
   Ctx.PlannedReservedRegs.resize(BC.MRI->getNumRegs(), false);
 
-  Ctx.UsedInFunction.resize(BC.MRI->getNumRegs(), false);
+  // ExpUsedInFunc: Physical registers explicitly used as instruction operands
+  Ctx.ExpUsedInFunc.resize(BC.MRI->getNumRegs(), false);
   for (const BinaryBasicBlock &BB : BF) {
     for (const MCInst &Inst : BB) {
       for (const MCOperand &Op : MCPlus::primeOperands(Inst)) {
         if (Op.isReg())
-          Ctx.UsedInFunction |= BC.MIB->getAliases(Op.getReg(), false);
+          Ctx.ExpUsedInFunc |= BC.MIB->getAliases(Op.getReg(), false);
       }
-      const MCInstrDesc &Desc = BC.MII->get(Inst.getOpcode());
-      for (MCPhysReg ImpUse : Desc.implicit_uses())
-        Ctx.UsedInFunction |= BC.MIB->getAliases(ImpUse, false);
-      for (MCPhysReg ImpDef : Desc.implicit_defs())
-        Ctx.UsedInFunction |= BC.MIB->getAliases(ImpDef, false);
     }
   }
 
@@ -81,8 +77,8 @@ FunctionRegContext FunctionRegContext::create(
                      BitVector AliasesA = BC.MIB->getAliases(A, false);
                      BitVector AliasesB = BC.MIB->getAliases(B, false);
 
-                     bool UnusedA = !Ctx.UsedInFunction.anyCommon(AliasesA);
-                     bool UnusedB = !Ctx.UsedInFunction.anyCommon(AliasesB);
+                     bool UnusedA = !Ctx.ExpUsedInFunc.anyCommon(AliasesA);
+                     bool UnusedB = !Ctx.ExpUsedInFunc.anyCommon(AliasesB);
 
                      if (UnusedA != UnusedB)
                        return UnusedA > UnusedB;
@@ -143,7 +139,7 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
     if (Opts.EvictEntryArg && IsABIArg)
       continue;
 
-    bool IsUsedInFunc = RegCtx.UsedInFunction.anyCommon(CandAliases);
+    bool IsUsedInFunc = RegCtx.ExpUsedInFunc.anyCommon(CandAliases);
     if (IsUsedInFunc && Extractor.isLiveDuringWeb(RegIdx, W))
       continue;
 
@@ -153,7 +149,8 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
   return 0;
 }
 
-void RegReallocEngine::applyReallocation(const RegisterWeb &W,
+void RegReallocEngine::applyReallocation(StringRef PassName,
+                                         const RegisterWeb &W,
                                          MCPhysReg TargetReg,
                                          MCPhysReg CandidateReg,
                                          const RegReallocOptions &Opts) {
@@ -229,8 +226,16 @@ void RegReallocEngine::applyReallocation(const RegisterWeb &W,
     }
   }
 
-  outs() << "  -> [SUCCESS_REALLOCATED] Reallocated " << SparedName
-         << " to " << CandName << "\n";
+  std::string ExtraOps = "";
+  if (Opts.ShiftCalleeSaved && Opts.EvictEntryArg)
+    ExtraOps = " [+push/pop, +mov]";
+  else if (Opts.ShiftCalleeSaved)
+    ExtraOps = " [+push/pop]";
+  else if (Opts.EvictEntryArg)
+    ExtraOps = " [+mov]";
+
+  outs() << "  -> [SUCCESS] [" << PassName << "] Web #" << W.WebID << " (" << SparedName
+         << ") -> " << CandName << ExtraOps << " in " << BF.getPrintName() << "\n";
 }
 
 } // namespace bolt

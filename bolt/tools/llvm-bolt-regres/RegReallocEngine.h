@@ -6,8 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Per-function Core Engine for Register Reallocation / Sparing Passes.
-// Uses FunctionRegContext with candidate reservation tracking during batch planning.
+// Per-function lightweight RegReallocEngine and FunctionRegContext.
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,13 +14,11 @@
 #define BOLT_TOOLS_LLVM_BOLT_OBJ_CFG_REGREALLOCENGINE_H
 
 #include "RegisterWebExtractor.h"
-#include "bolt/Core/BinaryBasicBlock.h"
-#include "bolt/Core/BinaryContext.h"
 #include "bolt/Core/BinaryFunction.h"
-#include "bolt/Passes/RegAnalysis.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCRegister.h"
 #include <string>
 
@@ -29,16 +26,16 @@ namespace llvm {
 namespace bolt {
 
 struct RegReallocOptions {
-  bool EvictEntryArg = false;    // Insert 'mov CandReg, TargetReg' at entry
-  bool ShiftCalleeSaved = false; // Insert prologue push / epilogue pop + CFI
+  bool EvictEntryArg = false;
+  bool ShiftCalleeSaved = false;
 };
 
-/// Holds function-level register classification data and planned candidate reservations.
+/// Encapsulates per-function register classification state.
 struct FunctionRegContext {
   BitVector GPRegs;
   BitVector CalleeSavedRegs;
   BitVector CandidatePool;
-  BitVector UsedInFunction;
+  BitVector ExpUsedInFunc;
   BitVector ABIArgRegs;
   BitVector PlannedReservedRegs;
   SmallVector<size_t, 16> RankedRegs;
@@ -60,6 +57,8 @@ public:
       : BF(BF), Extractor(Extractor),
         RegCtx(FunctionRegContext::create(BF, TargetRegNames)) {}
 
+  const FunctionRegContext &getRegContext() const { return RegCtx; }
+
   /// Marks a candidate register as reserved for a planned web in this batch.
   void reserveCandidate(MCPhysReg CandidateReg);
 
@@ -68,7 +67,7 @@ public:
                           const RegReallocOptions &Opts) const;
 
   /// Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.
-  void applyReallocation(const RegisterWeb &W, MCPhysReg TargetReg,
+  void applyReallocation(StringRef PassName, const RegisterWeb &W, MCPhysReg TargetReg,
                          MCPhysReg CandidateReg, const RegReallocOptions &Opts);
 };
 

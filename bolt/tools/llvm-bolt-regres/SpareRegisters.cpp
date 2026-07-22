@@ -65,8 +65,15 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
       std::make_unique<RegisterWebExtractor>(Function, *Info);
 
   CachedWebsMap CachedWebs;
-  for (MCPhysReg Reg : TargetSparedRegs)
-    CachedWebs[Reg] = Extractor->extractWebs(Reg);
+  for (MCPhysReg Reg : TargetSparedRegs) {
+    std::vector<RegisterWeb> Webs = Extractor->extractWebs(Reg);
+    if (Webs.empty()) {
+      outs() << "  -> [UNUSED] Target register " << StringRef(BC.MRI->getName(Reg)).upper()
+             << " is unused in " << Function.getPrintName() << "\n";
+      continue;
+    }
+    CachedWebs[Reg] = std::move(Webs);
+  }
 
   bool AnyChanged = false;
   bool AnalysisDirty = false;
@@ -82,8 +89,11 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
       });
 
       Extractor = std::make_unique<RegisterWebExtractor>(Function, *Info);
-      for (MCPhysReg Reg : TargetSparedRegs)
-        CachedWebs[Reg] = Extractor->extractWebs(Reg);
+      for (MCPhysReg Reg : TargetSparedRegs) {
+        std::vector<RegisterWeb> Webs = Extractor->extractWebs(Reg);
+        if (!Webs.empty())
+          CachedWebs[Reg] = std::move(Webs);
+      }
       AnalysisDirty = false;
     }
 

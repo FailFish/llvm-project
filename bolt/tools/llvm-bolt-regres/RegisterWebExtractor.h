@@ -30,6 +30,7 @@ namespace bolt {
 /// Represents a def-use web for a specific physical register across basic blocks.
 struct RegisterWeb {
   MCRegister Reg;
+  unsigned WebID = 0;
   std::set<const BinaryBasicBlock *> Blocks;
   std::vector<MCInst *> Instructions;
   bool CrossesCallSite = false;

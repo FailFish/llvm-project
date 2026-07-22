@@ -35,7 +35,7 @@ static void formatCleanRegSet(raw_ostream &OS, const BinaryContext &BC,
     if (GPRegs.test(Reg) && BC.MIB->getRegSize(Reg) == 8) {
       if (!First)
         OS << ", ";
-      OS << BC.MRI->getName(Reg);
+      OS << StringRef(BC.MRI->getName(Reg)).upper();
       First = false;
     }
   }
@@ -101,8 +101,9 @@ bool RegReallocPassBase::runWithCachedWebs(
     for (const RegisterWeb &W : It->second) {
       WorkList.push(&W);
       LLVM_DEBUG({
-        dbgs() << "BOLT-DEBUG: [" << getName() << "] Enqueued Web for "
-               << BC.MRI->getName(W.Reg) << " (Priority=" << W.Priority
+        dbgs() << "BOLT-DEBUG: [" << getName() << "] Enqueued Web #" << W.WebID
+               << " for " << StringRef(BC.MRI->getName(W.Reg)).upper()
+               << " (Priority=" << W.Priority
                << ", LiveAtEntry=" << W.LiveAtEntry
                << ", CrossesCallSite=" << W.CrossesCallSite
                << ", Insts=" << W.Instructions.size() << ")\n";
@@ -121,13 +122,17 @@ bool RegReallocPassBase::runWithCachedWebs(
       Engine.reserveCandidate(CandReg);
 
       LLVM_DEBUG({
-        dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: "
-               << BC.MRI->getName(W->Reg) << " -> "
-               << BC.MRI->getName(CandReg)
+        dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: Web #"
+               << W->WebID << " (" << StringRef(BC.MRI->getName(W->Reg)).upper()
+               << ") -> " << StringRef(BC.MRI->getName(CandReg)).upper()
                << " (Priority=" << W->Priority
                << ", LiveAtEntry=" << W->LiveAtEntry
                << ", CrossesCallSite=" << W->CrossesCallSite << ")\n";
       });
+    } else {
+      outs() << "  -> [FAILED] [" << getName() << "] Web #" << W->WebID << " ("
+             << StringRef(BC.MRI->getName(W->Reg)).upper()
+             << ") failed in " << Function.getPrintName() << "\n";
     }
   }
 
@@ -142,7 +147,7 @@ bool RegReallocPassBase::runWithCachedWebs(
 
   // Batch Mutation Phase: Apply planned reallocations
   for (const ReallocPlanItem &Item : Plan) {
-    Engine.applyReallocation(Item.Web, Item.TargetReg, Item.CandidateReg, Opts);
+    Engine.applyReallocation(getName(), Item.Web, Item.TargetReg, Item.CandidateReg, Opts);
   }
 
   return true;
@@ -157,20 +162,29 @@ bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA
     printLiveness(Function, Info, dbgs());
   });
 
-  BitVector SpareTargetRegs(Function.getBinaryContext().MRI->getNumRegs(), false);
+  const BinaryContext &BC = Function.getBinaryContext();
+
+  BitVector SpareTargetRegs(BC.MRI->getNumRegs(), false);
   for (const std::string &TargetRegName : TargetRegNames) {
-    for (unsigned R = 1; R < Function.getBinaryContext().MRI->getNumRegs(); ++R) {
-      if (StringRef(Function.getBinaryContext().MRI->getName(R)).equals_insensitive(TargetRegName)) {
-        SpareTargetRegs |= Function.getBinaryContext().MIB->getAliases(R, false);
+    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
+      if (StringRef(BC.MRI->getName(R)).equals_insensitive(TargetRegName)) {
+        SpareTargetRegs |= BC.MIB->getAliases(R, false);
         break;
       }
     }
   }
 
   CachedWebsMap CachedWebs;
-  for (unsigned R = 1; R < Function.getBinaryContext().MRI->getNumRegs(); ++R) {
-    if (SpareTargetRegs.test(R) && Function.getBinaryContext().MIB->getRegSize(R) == 8) {
-      CachedWebs[R] = Extractor.extractWebs(R);
+  for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
+    if (SpareTargetRegs.test(R) && BC.MIB->getRegSize(R) == 8) {
+      std::vector<RegisterWeb> Webs = Extractor.extractWebs(R);
+      if (Webs.empty()) {
+        outs() << "  -> [UNUSED] Target register " << StringRef(BC.MRI->getName(R)).upper()
+               << " is unused in " << Function.getPrintName() << "\n";
+        continue;
+      }
+
+      CachedWebs[R] = std::move(Webs);
     }
   }
 

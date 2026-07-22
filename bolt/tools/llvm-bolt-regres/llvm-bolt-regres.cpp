@@ -70,8 +70,8 @@ static cl::opt<bool>
               cl::init(true), cl::cat(RegResCategory));
 
 static cl::opt<bool>
-    PrintLiveness("print-liveness",
-                  cl::desc("Print LiveIn and LiveOut register sets for basic blocks"),
+    PrintCfg("print-asm-cfg",
+                  cl::desc("Print All (Untouched) Control Flow Graphs"),
                   cl::init(false), cl::cat(RegResCategory));
 
 static cl::opt<SpareStrategyMode> SpareStrategyOpt(
@@ -337,18 +337,6 @@ void ObjectRewriteInstance::buildFunctionsCFG() {
 }
 
 void ObjectRewriteInstance::runOptimizationPasses() {
-  if (opts::PrintLiveness) {
-    RegAnalysis RA(*BC, &BC->getBinaryFunctions(), nullptr);
-    SpareRegisters Pass;
-    for (auto &BFI : BC->getBinaryFunctions()) {
-      BinaryFunction &BF = BFI.second;
-      if (!BF.isSimple() || BF.isIgnored() || BF.empty())
-        continue;
-      DataflowInfoManager Info(BF, &RA, nullptr);
-      Pass.printLiveness(BF, Info);
-    }
-  }
-
   if (!opts::SpareRegs)
     return;
 
@@ -377,8 +365,11 @@ Error ObjectRewriteInstance::run() {
   readSymbolTable();
   disassembleFunctions();
   buildFunctionsCFG();
+
+  if (opts::PrintCfg)
+    printCFGs(outs());
+
   runOptimizationPasses();
-  // printCFGs(outs());
 
   return Error::success();
 }

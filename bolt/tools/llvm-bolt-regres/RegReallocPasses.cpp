@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegReallocPassBase using LLVM Priority Queue.
+// Implementation of RegReallocPassBase using a global priority queue across target registers.
 //
 //===----------------------------------------------------------------------===//
 
@@ -89,38 +89,45 @@ bool RegReallocPassBase::runWithCachedWebs(
 
   RegReallocEngine Engine(Function, Extractor, TargetRegNames);
 
-  // 1. Single-Analysis Planning Phase with LLVM Priority Queue (const RegisterWeb*)
+  // Single-Analysis Planning Phase with Global Priority Queue across all target registers
   SmallVector<ReallocPlanItem, 4> Plan;
+  WebPriorityQueue WorkList;
 
   for (MCPhysReg SparedReg : TargetSparedRegs) {
     auto It = CachedWebs.find(SparedReg);
     if (It == CachedWebs.end())
       continue;
 
-    // Enqueue web pointers into LLVM-style Priority Queue (highest LLVM priority score popped first)
-    WebPriorityQueue WorkList;
-    for (const RegisterWeb &W : It->second)
+    for (const RegisterWeb &W : It->second) {
       WorkList.push(&W);
+      LLVM_DEBUG({
+        dbgs() << "BOLT-DEBUG: [" << getName() << "] Enqueued Web for "
+               << BC.MRI->getName(W.Reg) << " (Priority=" << W.Priority
+               << ", LiveAtEntry=" << W.LiveAtEntry
+               << ", CrossesCallSite=" << W.CrossesCallSite
+               << ", Insts=" << W.Instructions.size() << ")\n";
+      });
+    }
+  }
 
-    while (!WorkList.empty()) {
-      const RegisterWeb *W = WorkList.top();
-      WorkList.pop();
+  while (!WorkList.empty()) {
+    const RegisterWeb *W = WorkList.top();
+    WorkList.pop();
 
-      MCPhysReg CandReg = Engine.findCandidate(*W, SparedReg, Opts);
+    MCPhysReg CandReg = Engine.findCandidate(*W, W->Reg, Opts);
 
-      if (CandReg != 0) {
-        Plan.push_back({*W, SparedReg, CandReg});
-        Engine.reserveCandidate(CandReg);
+    if (CandReg != 0) {
+      Plan.push_back({*W, static_cast<MCPhysReg>(W->Reg), CandReg});
+      Engine.reserveCandidate(CandReg);
 
-        LLVM_DEBUG({
-          dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: "
-                 << BC.MRI->getName(SparedReg) << " -> "
-                 << BC.MRI->getName(CandReg)
-                 << " (Priority=" << W->Priority
-                 << ", LiveAtEntry=" << W->LiveAtEntry
-                 << ", CrossesCallSite=" << W->CrossesCallSite << ")\n";
-        });
-      }
+      LLVM_DEBUG({
+        dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: "
+               << BC.MRI->getName(W->Reg) << " -> "
+               << BC.MRI->getName(CandReg)
+               << " (Priority=" << W->Priority
+               << ", LiveAtEntry=" << W->LiveAtEntry
+               << ", CrossesCallSite=" << W->CrossesCallSite << ")\n";
+      });
     }
   }
 
@@ -133,7 +140,7 @@ bool RegReallocPassBase::runWithCachedWebs(
            << " planned reallocation(s) on " << Function.getPrintName() << "\n";
   });
 
-  // 2. Batch Mutation Phase: Apply planned reallocations
+  // Batch Mutation Phase: Apply planned reallocations
   for (const ReallocPlanItem &Item : Plan) {
     Engine.applyReallocation(Item.Web, Item.TargetReg, Item.CandidateReg, Opts);
   }

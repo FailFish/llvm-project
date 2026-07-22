@@ -118,6 +118,8 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
   if (W.CrossesCallSite && !Opts.ShiftCalleeSaved)
     return 0;
 
+  bool TargetIsCalleeSaved = RegCtx.CalleeSavedRegs.test(TargetReg);
+
   for (size_t RegIdx : RegCtx.RankedRegs) {
     if (!RegCtx.GPRegs[RegIdx] || BC.MIB->getRegSize(RegIdx) != 8)
       continue;
@@ -134,15 +136,16 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
     if (RegCtx.PlannedReservedRegs.anyCommon(CandAliases))
       continue;
 
-    bool IsCalleeSaved = RegCtx.CalleeSavedRegs.test(RegIdx);
+    bool CandIsCalleeSaved = RegCtx.CalleeSavedRegs.test(RegIdx);
     bool IsABIArg = RegCtx.ABIArgRegs.anyCommon(CandAliases);
 
-    // Strict Candidate Set Partitioning per Strategy (register_sparing_strategy.md Section 5)
-    if (!Opts.ShiftCalleeSaved && IsCalleeSaved)
-      continue; // Phase 1 (DirectSwap / ArgEviction): Volatile candidates ONLY
+    // Direct Swap (0 added cost): Volatile -> Callee adds new push/pop (Not allowed in 0-cost swap)
+    if (!Opts.ShiftCalleeSaved && !TargetIsCalleeSaved && CandIsCalleeSaved)
+      continue;
 
-    if (Opts.ShiftCalleeSaved && !IsCalleeSaved)
-      continue; // Phase 2 (CalleeShift / ArgCalleeEviction): Callee-saved candidates ONLY
+    // Phase 2 (CalleeShift / ArgCalleeEviction): Callee-saved candidates ONLY
+    if (Opts.ShiftCalleeSaved && !CandIsCalleeSaved)
+      continue;
 
     if (Opts.EvictEntryArg && IsABIArg)
       continue;

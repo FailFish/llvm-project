@@ -34,6 +34,7 @@ struct RegisterWeb {
   std::vector<MCInst *> Instructions;
   bool CrossesCallSite = false;
   bool LiveAtEntry = false;
+  double Priority = 0.0; // LLVM Priority Score: ExecutionCost / Length
 };
 
 /// Extracts def-use webs and analyzes liveness for physical registers in a BinaryFunction.

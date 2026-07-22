@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // Independently Instantiable Register Reallocation Passes supporting
-// single-analysis batch planning and cross-pass cached web reuse.
+// single-analysis batch planning and cross-pass cached web reuse with LLVM Priority Queue.
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,7 +25,9 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
+#include <queue>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace llvm {
@@ -38,6 +40,18 @@ struct ReallocPlanItem {
 };
 
 using CachedWebsMap = DenseMap<MCPhysReg, std::vector<RegisterWeb>>;
+
+/// LLVM-style Priority Queue Comparator for RegisterWeb pointers
+struct CompWebPriority {
+  bool operator()(const RegisterWeb *A, const RegisterWeb *B) const {
+    // Compare by LLVM priority score first, with Reg ID as a stable tie-breaker
+    return std::tuple(A->Priority, A->Reg) <
+           std::tuple(B->Priority, B->Reg);
+  }
+};
+
+using WebPriorityQueue =
+    std::priority_queue<const RegisterWeb *, std::vector<const RegisterWeb *>, CompWebPriority>;
 
 // Base class for Register Reallocation Passes
 class RegReallocPassBase {

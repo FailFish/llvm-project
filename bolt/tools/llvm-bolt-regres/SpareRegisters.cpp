@@ -111,6 +111,10 @@ Error SpareRegisters::runOnFunctions(BinaryContext &BC) {
     runOnFunction(Function, RA);
   }
 
+  outs() << "\n=========================================================\n";
+  outs() << "BOLT-INFO: SpareRegisters Finished\n";
+  outs() << "=========================================================\n";
+
   return Error::success();
 }
 

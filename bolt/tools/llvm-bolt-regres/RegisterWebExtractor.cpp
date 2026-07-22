@@ -6,13 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegisterWebExtractor for def-use web extraction.
+// Implementation of RegisterWebExtractor for def-use web extraction and LLVM priority calculation.
 //
 //===----------------------------------------------------------------------===//
 
 #include "RegisterWebExtractor.h"
+#include "bolt/Core/BinaryLoop.h"
 #include "bolt/Core/MCPlus.h"
 #include "bolt/Core/MCPlusBuilder.h"
+#include <cmath>
 #include <map>
 #include <queue>
 #include <set>
@@ -155,7 +157,12 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
       }
     }
 
+    double ExecutionCost = 0.0;
+    BF.calculateLoopInfo();
+    const BinaryLoopInfo &BLI = BF.getLoopInfo();
+
     for (const BinaryBasicBlock *BB : W.Blocks) {
+      unsigned MentionCount = 0;
       for (MCInst &Inst : const_cast<BinaryBasicBlock &>(*BB)) {
         bool MentionsReg = false;
         for (const MCOperand &Op : MCPlus::primeOperands(Inst)) {
@@ -181,8 +188,10 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
             }
           }
         }
-        if (MentionsReg)
+        if (MentionsReg) {
           W.Instructions.push_back(&Inst);
+          MentionCount++;
+        }
 
         if (BC.MIB->isCall(Inst)) {
           ErrorOr<const BitVector &> StateBefore = LA.getStateAt(Inst);
@@ -193,8 +202,12 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
           }
         }
       }
+      const BinaryLoop *L = BLI.getLoopFor(BB);
+      unsigned Depth = L ? L->getLoopDepth() : 0;
+      ExecutionCost += MentionCount * std::pow(10.0, Depth);
     }
 
+    W.Priority = ExecutionCost / std::max<size_t>(1, W.Instructions.size());
     Webs.push_back(std::move(W));
   }
 

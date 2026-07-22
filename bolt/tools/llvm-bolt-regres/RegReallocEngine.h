@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Unified Core Engine for Register Reallocation / Sparing Passes.
-// Separates candidate search (planning) from code mutation (application).
+// Per-function Core Engine for Register Reallocation / Sparing Passes.
+// Uses FunctionRegContext with candidate reservation tracking during batch planning.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,6 +23,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCRegister.h"
+#include <string>
 
 namespace llvm {
 namespace bolt {
@@ -32,25 +33,43 @@ struct RegReallocOptions {
   bool ShiftCalleeSaved = false; // Insert prologue push / epilogue pop + CFI
 };
 
-class RegReallocEngine {
-public:
-  // Planning Phase: Finds an available, non-interfering candidate register for W.
-  // Returns candidate MCPhysReg, or 0 if no valid candidate exists.
-  static MCPhysReg findCandidate(BinaryFunction &BF, const RegisterWeb &W,
-                                 MCPhysReg TargetReg,
-                                 const RegReallocOptions &Opts,
-                                 RegisterWebExtractor &Extractor,
-                                 const BitVector &GPRegs,
-                                 const BitVector &CalleeSavedRegs,
-                                 const BitVector &CandidatePool,
-                                 const BitVector &UsedInFunction,
-                                 ArrayRef<size_t> RankedRegs,
-                                 const BitVector &ABIArgRegs);
+/// Holds function-level register classification data and planned candidate reservations.
+struct FunctionRegContext {
+  BitVector GPRegs;
+  BitVector CalleeSavedRegs;
+  BitVector CandidatePool;
+  BitVector UsedInFunction;
+  BitVector ABIArgRegs;
+  BitVector PlannedReservedRegs;
+  SmallVector<size_t, 16> RankedRegs;
 
-  // Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.
-  static void applyReallocation(BinaryFunction &BF, const RegisterWeb &W,
-                                MCPhysReg TargetReg, MCPhysReg CandidateReg,
-                                const RegReallocOptions &Opts);
+  static FunctionRegContext create(const BinaryFunction &BF,
+                                   ArrayRef<std::string> TargetRegNames);
+};
+
+/// Per-function Register Reallocation Engine.
+class RegReallocEngine {
+private:
+  BinaryFunction &BF;
+  RegisterWebExtractor &Extractor;
+  FunctionRegContext RegCtx;
+
+public:
+  RegReallocEngine(BinaryFunction &BF, RegisterWebExtractor &Extractor,
+                   ArrayRef<std::string> TargetRegNames)
+      : BF(BF), Extractor(Extractor),
+        RegCtx(FunctionRegContext::create(BF, TargetRegNames)) {}
+
+  /// Marks a candidate register as reserved for a planned web in this batch.
+  void reserveCandidate(MCPhysReg CandidateReg);
+
+  /// Planning Phase: Finds an available candidate register for W excluding reserved candidates.
+  MCPhysReg findCandidate(const RegisterWeb &W, MCPhysReg TargetReg,
+                          const RegReallocOptions &Opts) const;
+
+  /// Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.
+  void applyReallocation(const RegisterWeb &W, MCPhysReg TargetReg,
+                         MCPhysReg CandidateReg, const RegReallocOptions &Opts);
 };
 
 } // namespace bolt

@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegReallocPassBase.
+// Implementation of RegReallocPassBase using LLVM Priority Queue.
 //
 //===----------------------------------------------------------------------===//
 
@@ -19,8 +19,6 @@
 #include "bolt/Passes/DataflowAnalysis.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm>
-#include <numeric>
 
 #define DEBUG_TYPE "spare-regs"
 
@@ -79,57 +77,6 @@ bool RegReallocPassBase::runWithCachedWebs(
     RegisterWebExtractor &Extractor) {
   BinaryContext &BC = Function.getBinaryContext();
 
-  BitVector GPRegs(BC.MRI->getNumRegs(), false);
-  BC.MIB->getGPRegs(GPRegs);
-
-  BitVector CalleeSavedRegs(BC.MRI->getNumRegs(), false);
-  BC.MIB->getCalleeSavedRegs(CalleeSavedRegs);
-
-  BitVector SpareTargetRegs(BC.MRI->getNumRegs(), false);
-  for (const std::string &TargetRegName : TargetRegNames) {
-    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-      if (StringRef(BC.MRI->getName(R)).equals_insensitive(TargetRegName)) {
-        SpareTargetRegs |= BC.MIB->getAliases(R, false);
-        break;
-      }
-    }
-  }
-
-  BitVector CandidatePool(BC.MRI->getNumRegs(), false);
-  BC.MIB->getGPRegs(CandidatePool);
-  CandidatePool.flip();
-  CandidatePool |= SpareTargetRegs;
-  CandidatePool |= BC.MIB->getAliases(BC.MIB->getFramePointer(), false);
-  CandidatePool.flip();
-
-  SmallVector<size_t, 16> RankedRegs(BC.MRI->getNumRegs());
-  std::iota(RankedRegs.begin(), RankedRegs.end(), 0);
-
-  BitVector UsedInFunction(BC.MRI->getNumRegs(), false);
-  for (BinaryBasicBlock &BB : Function) {
-    for (MCInst &Inst : BB) {
-      for (MCOperand &Op : MCPlus::primeOperands(Inst)) {
-        if (Op.isReg())
-          UsedInFunction |= BC.MIB->getAliases(Op.getReg(), false);
-      }
-      const MCInstrDesc &Desc = BC.MII->get(Inst.getOpcode());
-      for (MCPhysReg ImpUse : Desc.implicit_uses())
-        UsedInFunction |= BC.MIB->getAliases(ImpUse, false);
-      for (MCPhysReg ImpDef : Desc.implicit_defs())
-        UsedInFunction |= BC.MIB->getAliases(ImpDef, false);
-    }
-  }
-
-  BitVector ABIArgRegs(BC.MRI->getNumRegs(), false);
-  for (const char *ArgName : {"RDI", "RSI", "RDX", "RCX", "R8", "R9"}) {
-    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-      if (StringRef(BC.MRI->getName(R)).equals_insensitive(ArgName)) {
-        ABIArgRegs |= BC.MIB->getAliases(R, false);
-        break;
-      }
-    }
-  }
-
   SmallVector<MCPhysReg, 4> TargetSparedRegs;
   for (const std::string &Name : TargetRegNames) {
     for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
@@ -140,32 +87,38 @@ bool RegReallocPassBase::runWithCachedWebs(
     }
   }
 
-  // 1. Single-Analysis Planning Phase: Build ReallocPlan for all eligible webs
+  RegReallocEngine Engine(Function, Extractor, TargetRegNames);
+
+  // 1. Single-Analysis Planning Phase with LLVM Priority Queue (const RegisterWeb*)
   SmallVector<ReallocPlanItem, 4> Plan;
 
   for (MCPhysReg SparedReg : TargetSparedRegs) {
-    BitVector SparedAliases = BC.MIB->getAliases(SparedReg, false);
-    if (!UsedInFunction.anyCommon(SparedAliases))
-      continue;
-
     auto It = CachedWebs.find(SparedReg);
     if (It == CachedWebs.end())
       continue;
 
-    for (const RegisterWeb &W : It->second) {
-      MCPhysReg CandReg = RegReallocEngine::findCandidate(
-          Function, W, SparedReg, Opts, Extractor, GPRegs, CalleeSavedRegs,
-          CandidatePool, UsedInFunction, RankedRegs, ABIArgRegs);
+    // Enqueue web pointers into LLVM-style Priority Queue (highest LLVM priority score popped first)
+    WebPriorityQueue WorkList;
+    for (const RegisterWeb &W : It->second)
+      WorkList.push(&W);
+
+    while (!WorkList.empty()) {
+      const RegisterWeb *W = WorkList.top();
+      WorkList.pop();
+
+      MCPhysReg CandReg = Engine.findCandidate(*W, SparedReg, Opts);
 
       if (CandReg != 0) {
-        Plan.push_back({W, SparedReg, CandReg});
+        Plan.push_back({*W, SparedReg, CandReg});
+        Engine.reserveCandidate(CandReg);
 
         LLVM_DEBUG({
           dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: "
                  << BC.MRI->getName(SparedReg) << " -> "
                  << BC.MRI->getName(CandReg)
-                 << " (LiveAtEntry=" << W.LiveAtEntry
-                 << ", CrossesCallSite=" << W.CrossesCallSite << ")\n";
+                 << " (Priority=" << W->Priority
+                 << ", LiveAtEntry=" << W->LiveAtEntry
+                 << ", CrossesCallSite=" << W->CrossesCallSite << ")\n";
         });
       }
     }
@@ -182,8 +135,7 @@ bool RegReallocPassBase::runWithCachedWebs(
 
   // 2. Batch Mutation Phase: Apply planned reallocations
   for (const ReallocPlanItem &Item : Plan) {
-    RegReallocEngine::applyReallocation(Function, Item.Web, Item.TargetReg,
-                                        Item.CandidateReg, Opts);
+    Engine.applyReallocation(Item.Web, Item.TargetReg, Item.CandidateReg, Opts);
   }
 
   return true;

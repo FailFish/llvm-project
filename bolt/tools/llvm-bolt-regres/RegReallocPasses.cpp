@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <numeric>
 
-#define DEBUG_TYPE "reg-realloc"
+#define DEBUG_TYPE "spare-regs"
 
 namespace llvm {
 namespace bolt {
@@ -45,31 +45,31 @@ static void formatCleanRegSet(raw_ostream &OS, const BinaryContext &BC,
     OS << "(none)";
 }
 
-void RegReallocPassBase::printLiveness(BinaryFunction &BF, DataflowInfoManager &Info) {
+void RegReallocPassBase::printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS) {
   const BinaryContext &BC = BF.getBinaryContext();
   LivenessAnalysis &LA = Info.getLivenessAnalysis();
 
-  outs() << "Function: " << BF.getPrintName() << "\n";
+  OS << "Function: " << BF.getPrintName() << "\n";
   for (BinaryBasicBlock &BB : BF) {
-    outs() << "  " << BB.getName() << ":\n";
+    OS << "  " << BB.getName() << ":\n";
 
     ProgramPoint FirstPP = ProgramPoint::getFirstPointAt(BB);
     ErrorOr<const BitVector &> LiveIn = LA.getStateAt(FirstPP);
-    outs() << "    LiveIn : ";
+    OS << "    LiveIn : ";
     if (LiveIn)
-      formatCleanRegSet(outs(), BC, *LiveIn);
+      formatCleanRegSet(OS, BC, *LiveIn);
     else
-      outs() << "(unknown)";
-    outs() << "\n";
+      OS << "(unknown)";
+    OS << "\n";
 
     ProgramPoint LastPP = ProgramPoint::getLastPointAt(BB);
     ErrorOr<const BitVector &> LiveOut = LA.getStateAt(LastPP);
-    outs() << "    LiveOut: ";
+    OS << "    LiveOut: ";
     if (LiveOut)
-      formatCleanRegSet(outs(), BC, *LiveOut);
+      formatCleanRegSet(OS, BC, *LiveOut);
     else
-      outs() << "(unknown)";
-    outs() << "\n";
+      OS << "(unknown)";
+    OS << "\n";
   }
 }
 
@@ -159,6 +159,14 @@ bool RegReallocPassBase::runWithCachedWebs(
 
       if (CandReg != 0) {
         Plan.push_back({W, SparedReg, CandReg});
+
+        LLVM_DEBUG({
+          dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: "
+                 << BC.MRI->getName(SparedReg) << " -> "
+                 << BC.MRI->getName(CandReg)
+                 << " (LiveAtEntry=" << W.LiveAtEntry
+                 << ", CrossesCallSite=" << W.CrossesCallSite << ")\n";
+        });
       }
     }
   }
@@ -166,6 +174,11 @@ bool RegReallocPassBase::runWithCachedWebs(
   // If no webs match strategy criteria, return false (0 changes made)
   if (Plan.empty())
     return false;
+
+  LLVM_DEBUG({
+    dbgs() << "BOLT-DEBUG: [" << getName() << "] Executing " << Plan.size()
+           << " planned reallocation(s) on " << Function.getPrintName() << "\n";
+  });
 
   // 2. Batch Mutation Phase: Apply planned reallocations
   for (const ReallocPlanItem &Item : Plan) {
@@ -179,6 +192,11 @@ bool RegReallocPassBase::runWithCachedWebs(
 bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
   DataflowInfoManager Info(Function, &RA, nullptr);
   RegisterWebExtractor Extractor(Function, Info);
+
+  LLVM_DEBUG({
+    dbgs() << "BOLT-DEBUG: [Liveness Analysis] " << Function.getPrintName() << "\n";
+    printLiveness(Function, Info, dbgs());
+  });
 
   BitVector SpareTargetRegs(Function.getBinaryContext().MRI->getNumRegs(), false);
   for (const std::string &TargetRegName : TargetRegNames) {

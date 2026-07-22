@@ -11,14 +11,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "SpareRegisters.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+
+#define DEBUG_TYPE "spare-regs"
 
 namespace llvm {
 namespace bolt {
 
-void SpareRegisters::printLiveness(BinaryFunction &BF, DataflowInfoManager &Info) {
-  DirectRegRealloc Helper;
-  Helper.printLiveness(BF, Info);
+void SpareRegisters::printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS) {
+  RegReallocPassBase::printLiveness(BF, Info, OS);
 }
 
 bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
@@ -53,6 +55,12 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
   // 1. Initial DataflowInfoManager and Web Extraction ONCE per function
   std::unique_ptr<DataflowInfoManager> Info =
       std::make_unique<DataflowInfoManager>(Function, &RA, nullptr);
+
+  LLVM_DEBUG({
+    dbgs() << "BOLT-DEBUG: [Liveness Analysis] " << Function.getPrintName() << "\n";
+    RegReallocPassBase::printLiveness(Function, *Info, dbgs());
+  });
+
   std::unique_ptr<RegisterWebExtractor> Extractor =
       std::make_unique<RegisterWebExtractor>(Function, *Info);
 
@@ -67,6 +75,12 @@ bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
     // Refresh liveness analysis and webs ONLY if a previous pass modified code
     if (AnalysisDirty) {
       Info = std::make_unique<DataflowInfoManager>(Function, &RA, nullptr);
+
+      LLVM_DEBUG({
+        dbgs() << "BOLT-DEBUG: [Liveness Analysis REFRESH] " << Function.getPrintName() << "\n";
+        RegReallocPassBase::printLiveness(Function, *Info, dbgs());
+      });
+
       Extractor = std::make_unique<RegisterWebExtractor>(Function, *Info);
       for (MCPhysReg Reg : TargetSparedRegs)
         CachedWebs[Reg] = Extractor->extractWebs(Reg);

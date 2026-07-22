@@ -24,6 +24,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/raw_ostream.h"
 #include <string>
 #include <vector>
 
@@ -52,7 +53,7 @@ public:
 
   virtual StringRef getName() const = 0;
 
-  void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info);
+  static void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS = outs());
 
   // Single-Analysis Batch Planning: Accepts pre-extracted cached webs map
   bool runWithCachedWebs(BinaryFunction &Function,

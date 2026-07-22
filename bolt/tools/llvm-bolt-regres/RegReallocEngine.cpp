@@ -18,8 +18,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "MCTargetDesc/X86MCTargetDesc.h"
 
-#define DEBUG_TYPE "reg-realloc"
-
 namespace llvm {
 namespace bolt {
 

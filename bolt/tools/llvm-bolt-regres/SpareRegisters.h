@@ -47,7 +47,7 @@ public:
                  SpareStrategyMode Mode = SpareStrategyMode::All)
       : TargetRegNames(TargetRegs.begin(), TargetRegs.end()), StrategyMode(Mode) {}
 
-  void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info);
+  static void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS = outs());
   bool runOnFunction(BinaryFunction &Function, RegAnalysis &RA);
   Error runOnFunctions(BinaryContext &BC);
 };

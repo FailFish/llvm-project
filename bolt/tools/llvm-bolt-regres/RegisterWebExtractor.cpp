@@ -91,6 +91,8 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
     return Webs;
 
   BitVector RegAliases = BC.MIB->getAliases(Reg, /*OnlySmaller=*/false);
+  BitVector ABIArgRegs = BC.MIB->getRegsUsedAsParams();
+  bool IsABIArgReg = RegAliases.anyCommon(ABIArgRegs);
 
   // 1. Identify active basic blocks for Reg
   std::vector<const BinaryBasicBlock *> ActiveBlocks;
@@ -145,14 +147,16 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
       }
     }
 
-    // 4. Compute LiveAtEntry, CrossesCallSite, and Instructions for web W
-    for (const BinaryBasicBlock *BB : W.Blocks) {
-      if (BB == &*BF.begin() || BB->pred_size() == 0) {
-        ProgramPoint FirstPP =
-            ProgramPoint::getFirstPointAt(const_cast<BinaryBasicBlock &>(*BB));
-        if (LA.isAlive(FirstPP, Reg)) {
-          W.LiveAtEntry = true;
-          break;
+    // 4. Compute LiveAtEntry (only genuine incoming ABI argument registers)
+    if (IsABIArgReg) {
+      for (const BinaryBasicBlock *BB : W.Blocks) {
+        if (BB == &*BF.begin() || BB->pred_size() == 0) {
+          ProgramPoint FirstPP =
+              ProgramPoint::getFirstPointAt(const_cast<BinaryBasicBlock &>(*BB));
+          if (LA.isAlive(FirstPP, Reg)) {
+            W.LiveAtEntry = true;
+            break;
+          }
         }
       }
     }
@@ -207,7 +211,10 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
       ExecutionCost += MentionCount * std::pow(10.0, Depth);
     }
 
-    W.Priority = ExecutionCost / std::max<size_t>(1, W.Instructions.size());
+    if (W.Instructions.empty())
+      continue;
+
+    W.Priority = ExecutionCost / W.Instructions.size();
     Webs.push_back(std::move(W));
   }
 

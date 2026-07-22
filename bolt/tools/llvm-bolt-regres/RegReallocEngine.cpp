@@ -71,15 +71,7 @@ FunctionRegContext FunctionRegContext::create(
     }
   }
 
-  Ctx.ABIArgRegs.resize(BC.MRI->getNumRegs(), false);
-  for (const char *ArgName : {"RDI", "RSI", "RDX", "RCX", "R8", "R9"}) {
-    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-      if (StringRef(BC.MRI->getName(R)).equals_insensitive(ArgName)) {
-        Ctx.ABIArgRegs |= BC.MIB->getAliases(R, false);
-        break;
-      }
-    }
-  }
+  Ctx.ABIArgRegs = BC.MIB->getRegsUsedAsParams();
 
   // Rank candidate registers: Unused registers in function get top priority
   Ctx.RankedRegs.resize(BC.MRI->getNumRegs());
@@ -139,6 +131,7 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
     bool CandIsCalleeSaved = RegCtx.CalleeSavedRegs.test(RegIdx);
     bool IsABIArg = RegCtx.ABIArgRegs.anyCommon(CandAliases);
 
+    // Strategy-based candidate set partitioning (register_sparing_strategy.md Section 5)
     // Direct Swap (0 added cost): Volatile -> Callee adds new push/pop (Not allowed in 0-cost swap)
     if (!Opts.ShiftCalleeSaved && !TargetIsCalleeSaved && CandIsCalleeSaved)
       continue;

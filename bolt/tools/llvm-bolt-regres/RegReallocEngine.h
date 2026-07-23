@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Per-function lightweight RegReallocEngine and FunctionRegContext.
+// Per-function lightweight RegReallocEngine, FunctionRegContext, and FunctionPlan.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,6 +28,21 @@ namespace bolt {
 struct RegReallocOptions {
   bool EvictEntryArg = false;
   bool ShiftCalleeSaved = false;
+};
+
+/// Represents a single planned web reallocation item.
+struct ReallocPlanItem {
+  RegisterWeb Web;
+  MCPhysReg TargetReg;
+  MCPhysReg CandidateReg;
+  RegReallocOptions Opts;
+  std::string PassName;
+};
+
+/// Stores batch planning decisions for a BinaryFunction before mutations.
+struct FunctionPlan {
+  BitVector PlannedProloguePushedRegs;
+  SmallVector<ReallocPlanItem, 8> PlannedItems;
 };
 
 /// Encapsulates per-function register classification state.
@@ -69,6 +84,9 @@ public:
   /// Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.
   void applyReallocation(StringRef PassName, const RegisterWeb &W, MCPhysReg TargetReg,
                          MCPhysReg CandidateReg, const RegReallocOptions &Opts);
+
+  /// Single Batch Mutation Phase: Applies all planned reallocations in FunctionPlan.
+  void applyFunctionPlan(const FunctionPlan &Plan);
 };
 
 } // namespace bolt

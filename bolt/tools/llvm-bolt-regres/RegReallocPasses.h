@@ -1,4 +1,4 @@
-//===- bolt/tools/llvm-bolt-regres/RegReallocPasses.h --------*- C++ -*-===//
+//===- bolt/tools/llvm-bolt-regres/RegReallocPasses.h ------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,8 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Independently Instantiable Register Reallocation Passes supporting
-// single-analysis batch planning and cross-pass cached web reuse with LLVM Priority Queue.
+// Pass driver base and derived pass definitions for register reallocation.
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,6 +14,7 @@
 #define BOLT_TOOLS_LLVM_BOLT_OBJ_CFG_REGREALLOCPASSES_H
 
 #include "RegReallocEngine.h"
+#include "RegisterWebExtractor.h"
 #include "bolt/Core/BinaryContext.h"
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Passes/DataflowInfoManager.h"
@@ -33,12 +33,6 @@
 namespace llvm {
 namespace bolt {
 
-struct ReallocPlanItem {
-  RegisterWeb Web;
-  MCPhysReg TargetReg;
-  MCPhysReg CandidateReg;
-};
-
 using CachedWebsMap = DenseMap<MCPhysReg, std::vector<RegisterWeb>>;
 
 /// LLVM-style Priority Queue Comparator for RegisterWeb pointers
@@ -51,25 +45,26 @@ struct CompWebPriority {
 };
 
 using WebPriorityQueue =
-    std::priority_queue<const RegisterWeb *, std::vector<const RegisterWeb *>, CompWebPriority>;
+    std::priority_queue<const RegisterWeb *, std::vector<const RegisterWeb *>,
+                        CompWebPriority>;
 
-// Base class for Register Reallocation Passes
+/// Abstract base class for single-analysis register reallocation passes.
 class RegReallocPassBase {
 protected:
   SmallVector<std::string, 4> TargetRegNames;
   RegReallocOptions Opts;
 
 public:
-  RegReallocPassBase(ArrayRef<std::string> TargetRegs, RegReallocOptions Options)
-      : TargetRegNames(TargetRegs.begin(), TargetRegs.end()), Opts(Options) {}
+  RegReallocPassBase(ArrayRef<std::string> TargetRegs, RegReallocOptions Opts)
+      : TargetRegNames(TargetRegs.begin(), TargetRegs.end()), Opts(Opts) {}
 
   virtual ~RegReallocPassBase() = default;
 
   virtual StringRef getName() const = 0;
 
-  static void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS = outs());
+  static void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS);
 
-  // Single-Analysis Batch Planning: Accepts pre-extracted cached webs map
+  /// Executes reallocation planning and batch mutation using cached def-use webs.
   bool runWithCachedWebs(BinaryFunction &Function,
                          const CachedWebsMap &CachedWebs,
                          RegisterWebExtractor &Extractor);

@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of SpareRegisters pipeline orchestrator.
+// Implementation of SpareRegisters pipeline orchestrator using single-analysis planning.
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,86 +24,34 @@ void SpareRegisters::printLiveness(BinaryFunction &BF, DataflowInfoManager &Info
 }
 
 bool SpareRegisters::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
-  BinaryContext &BC = Function.getBinaryContext();
-
-  BitVector SpareTargetRegs(BC.MRI->getNumRegs(), false);
-  SmallVector<MCPhysReg, 4> TargetSparedRegs;
-  for (const std::string &Name : TargetRegNames) {
-    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-      if (StringRef(BC.MRI->getName(R)).equals_insensitive(Name)) {
-        TargetSparedRegs.push_back(R);
-        SpareTargetRegs |= BC.MIB->getAliases(R, false);
-        break;
-      }
-    }
-  }
-
-  SmallVector<std::unique_ptr<RegReallocPassBase>, 4> EnabledPasses;
-
-  if (StrategyMode == SpareStrategyMode::DirectSwap || StrategyMode == SpareStrategyMode::All)
-    EnabledPasses.push_back(std::make_unique<DirectRegRealloc>(TargetRegNames));
-
-  if (StrategyMode == SpareStrategyMode::ArgEviction || StrategyMode == SpareStrategyMode::All)
-    EnabledPasses.push_back(std::make_unique<ArgRegRealloc>(TargetRegNames));
-
-  if (StrategyMode == SpareStrategyMode::CalleeShift || StrategyMode == SpareStrategyMode::All)
-    EnabledPasses.push_back(std::make_unique<CalleeRegRealloc>(TargetRegNames));
-
-  if (StrategyMode == SpareStrategyMode::ArgCalleeEviction || StrategyMode == SpareStrategyMode::All)
-    EnabledPasses.push_back(std::make_unique<ArgCalleeRegRealloc>(TargetRegNames));
-
-  // 1. Initial DataflowInfoManager and Web Extraction ONCE per function
-  std::unique_ptr<DataflowInfoManager> Info =
-      std::make_unique<DataflowInfoManager>(Function, &RA, nullptr);
+  DataflowInfoManager Info(Function, &RA, nullptr);
 
   LLVM_DEBUG({
     dbgs() << "BOLT-DEBUG: [Liveness Analysis] " << Function.getPrintName() << "\n";
-    RegReallocPassBase::printLiveness(Function, *Info, dbgs());
+    RegReallocPassBase::printLiveness(Function, Info, dbgs());
   });
 
-  std::unique_ptr<RegisterWebExtractor> Extractor =
-      std::make_unique<RegisterWebExtractor>(Function, *Info);
+  RegisterWebExtractor Extractor(Function, Info);
+  RegReallocEngine Engine(Function, Extractor, TargetRegNames);
 
-  CachedWebsMap CachedWebs;
-  for (MCPhysReg Reg : TargetSparedRegs) {
-    std::vector<RegisterWeb> Webs = Extractor->extractWebs(Reg);
-    if (Webs.empty()) {
-      outs() << "  -> [UNUSED] Target register " << StringRef(BC.MRI->getName(Reg)).upper()
-             << " is unused in " << Function.getPrintName() << "\n";
-      continue;
-    }
-    CachedWebs[Reg] = std::move(Webs);
+  RegReallocOptions AllowedOpts;
+  if (StrategyMode == SpareStrategyMode::ArgEviction || StrategyMode == SpareStrategyMode::All)
+    AllowedOpts.EvictEntryArg = true;
+  if (StrategyMode == SpareStrategyMode::CalleeShift || StrategyMode == SpareStrategyMode::All)
+    AllowedOpts.ShiftCalleeSaved = true;
+  if (StrategyMode == SpareStrategyMode::ArgCalleeEviction || StrategyMode == SpareStrategyMode::All) {
+    AllowedOpts.EvictEntryArg = true;
+    AllowedOpts.ShiftCalleeSaved = true;
   }
 
-  bool AnyChanged = false;
-  bool AnalysisDirty = false;
+  FunctionPlan Plan;
+  Engine.planFunction(Plan, TargetRegNames, AllowedOpts);
 
-  for (auto &Pass : EnabledPasses) {
-    // Refresh liveness analysis and webs ONLY if a previous pass modified code
-    if (AnalysisDirty) {
-      Info = std::make_unique<DataflowInfoManager>(Function, &RA, nullptr);
+  if (Plan.PlannedItems.empty())
+    return false;
 
-      LLVM_DEBUG({
-        dbgs() << "BOLT-DEBUG: [Liveness Analysis REFRESH] " << Function.getPrintName() << "\n";
-        RegReallocPassBase::printLiveness(Function, *Info, dbgs());
-      });
-
-      Extractor = std::make_unique<RegisterWebExtractor>(Function, *Info);
-      for (MCPhysReg Reg : TargetSparedRegs) {
-        std::vector<RegisterWeb> Webs = Extractor->extractWebs(Reg);
-        if (!Webs.empty())
-          CachedWebs[Reg] = std::move(Webs);
-      }
-      AnalysisDirty = false;
-    }
-
-    if (Pass->runWithCachedWebs(Function, CachedWebs, *Extractor)) {
-      AnyChanged = true;
-      AnalysisDirty = true; // Mark dirty so subsequent passes refresh if needed
-    }
-  }
-
-  return AnyChanged;
+  Engine.applyFunctionPlan(Plan);
+  return true;
 }
 
 Error SpareRegisters::runOnFunctions(BinaryContext &BC) {

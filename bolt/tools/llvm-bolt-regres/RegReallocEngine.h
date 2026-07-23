@@ -81,6 +81,10 @@ public:
   MCPhysReg findCandidate(const RegisterWeb &W, MCPhysReg TargetReg,
                           const RegReallocOptions &Opts) const;
 
+  /// Unified Multi-Pass Planning Phase: Plans all webs for target registers in BF into Plan.
+  void planFunction(FunctionPlan &Plan, ArrayRef<std::string> TargetRegNames,
+                    const RegReallocOptions &AllowedOpts);
+
   /// Mutation Phase: Applies register swapping, entry move, and prologue/epilogue CFI.
   void applyReallocation(StringRef PassName, const RegisterWeb &W, MCPhysReg TargetReg,
                          MCPhysReg CandidateReg, const RegReallocOptions &Opts);

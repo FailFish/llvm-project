@@ -20,6 +20,8 @@
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include <algorithm>
 #include <numeric>
+#include <queue>
+#include <tuple>
 
 #define DEBUG_TYPE "spare-regs"
 
@@ -149,6 +151,97 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
   return 0;
 }
 
+void RegReallocEngine::planFunction(FunctionPlan &Plan,
+                                    ArrayRef<std::string> TargetRegNames,
+                                    const RegReallocOptions &AllowedOpts) {
+  const BinaryContext &BC = BF.getBinaryContext();
+  Plan.PlannedProloguePushedRegs.resize(BC.MRI->getNumRegs(), false);
+
+  SmallVector<MCPhysReg, 4> TargetSparedRegs;
+  for (const std::string &Name : TargetRegNames) {
+    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
+      if (StringRef(BC.MRI->getName(R)).equals_insensitive(Name)) {
+        TargetSparedRegs.push_back(R);
+        break;
+      }
+    }
+  }
+
+  // 1. Extract webs ONCE per target register
+  DenseMap<MCPhysReg, std::vector<RegisterWeb>> CachedTargetWebs;
+  for (MCPhysReg TargetReg : TargetSparedRegs) {
+    std::vector<RegisterWeb> Webs = Extractor.extractWebs(TargetReg);
+    if (Webs.empty()) {
+      outs() << "  -> [UNUSED] Target register "
+             << StringRef(BC.MRI->getName(TargetReg)).upper()
+             << " is unused in " << BF.getPrintName() << "\n";
+      continue;
+    }
+    CachedTargetWebs[TargetReg] = std::move(Webs);
+  }
+
+  // 2. Enqueue ALL webs across target registers into a single Global Priority Queue
+  struct CompWebPriority {
+    bool operator()(const RegisterWeb *A, const RegisterWeb *B) const {
+      return std::tuple(A->Priority, A->Reg) < std::tuple(B->Priority, B->Reg);
+    }
+  };
+  std::priority_queue<const RegisterWeb *, std::vector<const RegisterWeb *>,
+                      CompWebPriority>
+      WorkList;
+
+  for (const auto &Entry : CachedTargetWebs) {
+    for (const RegisterWeb &W : Entry.second) {
+      WorkList.push(&W);
+    }
+  }
+
+  // Define strategy waterfall phases to evaluate for each web
+  struct StrategyPhase {
+    StringRef Name;
+    RegReallocOptions Opts;
+  };
+  SmallVector<StrategyPhase, 4> Phases;
+  Phases.push_back({"DirectRegRealloc", {false, false}});
+  if (AllowedOpts.EvictEntryArg)
+    Phases.push_back({"ArgRegRealloc", {true, false}});
+  if (AllowedOpts.ShiftCalleeSaved)
+    Phases.push_back({"CalleeRegRealloc", {false, true}});
+  if (AllowedOpts.EvictEntryArg && AllowedOpts.ShiftCalleeSaved)
+    Phases.push_back({"ArgCalleeRegRealloc", {true, true}});
+
+  // 3. Process webs in global priority order
+  while (!WorkList.empty()) {
+    const RegisterWeb *W = WorkList.top();
+    WorkList.pop();
+
+    MCPhysReg AllocatedCand = 0;
+    StrategyPhase ChosenPhase;
+
+    for (const StrategyPhase &Phase : Phases) {
+      MCPhysReg CandReg = findCandidate(*W, W->Reg, Phase.Opts);
+      if (CandReg != 0) {
+        AllocatedCand = CandReg;
+        ChosenPhase = Phase;
+        break;
+      }
+    }
+
+    if (AllocatedCand != 0) {
+      Plan.PlannedItems.push_back(
+          {*W, static_cast<MCPhysReg>(W->Reg), AllocatedCand, ChosenPhase.Opts, ChosenPhase.Name.str()});
+      reserveCandidate(AllocatedCand);
+      if (ChosenPhase.Opts.ShiftCalleeSaved)
+        Plan.PlannedProloguePushedRegs.set(AllocatedCand);
+    } else {
+      // Print [FAILED] status once per web that could not be allocated
+      outs() << "  -> [FAILED] Web #" << W->WebID << " ("
+             << StringRef(BC.MRI->getName(W->Reg)).upper()
+             << ") failed in " << BF.getPrintName() << "\n";
+    }
+  }
+}
+
 void RegReallocEngine::applyReallocation(StringRef PassName,
                                          const RegisterWeb &W,
                                          MCPhysReg TargetReg,
@@ -236,6 +329,12 @@ void RegReallocEngine::applyReallocation(StringRef PassName,
 
   outs() << "  -> [SUCCESS] [" << PassName << "] Web #" << W.WebID << " (" << SparedName
          << ") -> " << CandName << ExtraOps << " in " << BF.getPrintName() << "\n";
+}
+
+void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
+  for (const ReallocPlanItem &Item : Plan.PlannedItems) {
+    applyReallocation(Item.PassName, Item.Web, Item.TargetReg, Item.CandidateReg, Item.Opts);
+  }
 }
 
 } // namespace bolt

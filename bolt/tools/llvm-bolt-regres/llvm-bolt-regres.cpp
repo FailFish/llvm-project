@@ -13,6 +13,7 @@
 
 #include "bolt/Core/BinaryBasicBlock.h"
 #include "bolt/Core/BinaryContext.h"
+#include "bolt/Core/BinaryEmitter.h"
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Core/MCPlus.h"
 #include "bolt/Core/MCPlusBuilder.h"
@@ -73,6 +74,11 @@ static cl::opt<bool>
     PrintCfg("print-asm-cfg",
                   cl::desc("Print All (Untouched) Control Flow Graphs"),
                   cl::init(false), cl::cat(RegResCategory));
+
+static cl::opt<bool>
+    PrintDiff("print-diff",
+              cl::desc("Print disassembly diff for rewritten functions"),
+              cl::init(false), cl::cat(RegResCategory));
 
 static cl::opt<SpareStrategyMode> SpareStrategyOpt(
     "spare-strategy", cl::desc("Strategy for register sparing/reallocation"),
@@ -151,6 +157,15 @@ public:
   /// Step 6: Dump formatted CFGs to output stream
   void printCFGs(raw_ostream &OS);
 
+  /// Step 7: Emit rewritten binary functions to output object file (.o)
+  void emitObjectFile(StringRef OutputFilename);
+
+  /// Helper: Capture disassembly representation of a function
+  std::vector<std::string> disassembleFunctionLines(const BinaryFunction &BF);
+
+  /// Helper: Print disassembly diff for rewritten functions
+  void printDiff(const std::map<const BinaryFunction *, std::vector<std::string>> &OriginalFuncLines);
+
 private:
   ObjectRewriteInstance(ObjectFile *ObjFile, std::unique_ptr<BinaryContext> BC)
       : ObjFile(ObjFile), BC(std::move(BC)) {}
@@ -168,6 +183,23 @@ private:
 };
 
 void ObjectRewriteInstance::processSectionMetadata() {
+  // Derive alignment from input object file text section if not explicitly specified via CLI
+  for (const SectionRef &Section : ObjFile->sections()) {
+    if (Section.isText()) {
+      uint64_t SecAlign = Section.getAlignment().value();
+      if (SecAlign > 0) {
+        if (!opts::AlignText.getNumOccurrences())
+          opts::AlignText = SecAlign;
+        if (!opts::AlignFunctions.getNumOccurrences())
+          opts::AlignFunctions = SecAlign;
+      }
+    }
+  }
+  if (!opts::AlignText)
+    opts::AlignText = 1;
+  if (!opts::AlignFunctions)
+    opts::AlignFunctions = 1;
+
   // Register sections in BinaryContext
   for (const SectionRef &Section : ObjFile->sections()) {
     BC->registerSection(Section);
@@ -358,6 +390,106 @@ void ObjectRewriteInstance::printCFGs(raw_ostream &OS) {
   }
 }
 
+std::vector<std::string>
+ObjectRewriteInstance::disassembleFunctionLines(const BinaryFunction &BF) {
+  std::vector<std::string> Lines;
+  for (const BinaryBasicBlock &BB : BF) {
+    Lines.push_back(BB.getName().str() + ":");
+    for (const MCInst &Inst : BB) {
+      std::string InstStr;
+      raw_string_ostream SS(InstStr);
+      BC->printInstruction(SS, Inst, 0, &BF, /*PrintMCInst=*/false,
+                           /*PrintMemData=*/false, /*PrintRelocations=*/false,
+                           /*Endl=*/"");
+      Lines.push_back("  " + SS.str());
+    }
+  }
+  return Lines;
+}
+
+void ObjectRewriteInstance::printDiff(
+    const std::map<const BinaryFunction *, std::vector<std::string>>
+        &OriginalFuncLines) {
+  for (auto &BFI : BC->getBinaryFunctions()) {
+    const BinaryFunction &BF = BFI.second;
+    if (!opts::FilterFunc.empty() && !BF.hasNameRegex(opts::FilterFunc))
+      continue;
+
+    auto It = OriginalFuncLines.find(&BF);
+    if (It == OriginalFuncLines.end())
+      continue;
+
+    const std::vector<std::string> &Before = It->second;
+    std::vector<std::string> After = disassembleFunctionLines(BF);
+
+    if (Before == After)
+      continue;
+
+    outs() << "--- a/" << BF.getPrintName() << "\n";
+    outs() << "+++ b/" << BF.getPrintName() << "\n";
+    outs() << "@@ -1," << Before.size() << " +1," << After.size() << " @@\n";
+
+    size_t i = 0, j = 0;
+    while (i < Before.size() || j < After.size()) {
+      if (i < Before.size() && j < After.size() && Before[i] == After[j]) {
+        outs() << "  " << Before[i] << "\n";
+        i++;
+        j++;
+      } else {
+        size_t MatchI = i, MatchJ = j;
+        bool FoundMatch = false;
+        for (size_t lookI = i; lookI < Before.size() && !FoundMatch; ++lookI) {
+          for (size_t lookJ = j; lookJ < After.size() && !FoundMatch; ++lookJ) {
+            if (Before[lookI] == After[lookJ]) {
+              MatchI = lookI;
+              MatchJ = lookJ;
+              FoundMatch = true;
+            }
+          }
+        }
+        if (FoundMatch) {
+          while (i < MatchI) {
+            outs() << "- " << Before[i++] << "\n";
+          }
+          while (j < MatchJ) {
+            outs() << "+ " << After[j++] << "\n";
+          }
+        } else {
+          while (i < Before.size()) {
+            outs() << "- " << Before[i++] << "\n";
+          }
+          while (j < After.size()) {
+            outs() << "+ " << After[j++] << "\n";
+          }
+        }
+      }
+    }
+  }
+}
+
+void ObjectRewriteInstance::emitObjectFile(StringRef OutputFilename) {
+  outs() << "BOLT-INFO: Emitting rewritten object file: " << OutputFilename
+         << "\n";
+  std::error_code EC;
+  raw_fd_ostream OS(OutputFilename, EC, sys::fs::OF_None);
+  if (EC) {
+    errs() << ToolName << ": cannot open output file '" << OutputFilename
+           << "': " << EC.message() << "\n";
+    exit(1);
+  }
+
+  BC->getOutputBinaryFunctions().clear();
+  for (auto &BFI : BC->getBinaryFunctions()) {
+    BinaryFunction &BF = BFI.second;
+    if (BC->shouldEmit(BF))
+      BC->getOutputBinaryFunctions().push_back(&BF);
+  }
+
+  std::unique_ptr<MCStreamer> Streamer = BC->createStreamer(OS);
+  emitBinaryContext(*Streamer, *BC);
+  Streamer->finish();
+}
+
 Error ObjectRewriteInstance::run() {
   outs() << "BOLT-INFO: Disassembling object file: " << ObjFile->getFileName()
          << " (" << BC->TheTriple->str() << ")\n";
@@ -370,10 +502,20 @@ Error ObjectRewriteInstance::run() {
   if (opts::PrintCfg)
     printCFGs(outs());
 
+  std::map<const BinaryFunction *, std::vector<std::string>> OriginalFuncLines;
+  if (opts::PrintDiff) {
+    for (auto &BFI : BC->getBinaryFunctions()) {
+      OriginalFuncLines[&BFI.second] = disassembleFunctionLines(BFI.second);
+    }
+  }
+
   runOptimizationPasses();
 
-  if (opts::PrintCfg)
-    printCFGs(outs());
+  if (opts::PrintDiff)
+    printDiff(OriginalFuncLines);
+
+  if (!opts::OutputFilename.empty())
+    emitObjectFile(opts::OutputFilename);
 
   return Error::success();
 }

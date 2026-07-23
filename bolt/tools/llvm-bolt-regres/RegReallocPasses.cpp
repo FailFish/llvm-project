@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Implementation of RegReallocPassBase using a global priority queue across target registers.
+// Implementation of RegReallocPassBase using single-analysis planning.
 //
 //===----------------------------------------------------------------------===//
 
@@ -75,120 +75,36 @@ bool RegReallocPassBase::runWithCachedWebs(
     BinaryFunction &Function,
     const CachedWebsMap &CachedWebs,
     RegisterWebExtractor &Extractor) {
-  BinaryContext &BC = Function.getBinaryContext();
-
-  SmallVector<MCPhysReg, 4> TargetSparedRegs;
-  for (const std::string &Name : TargetRegNames) {
-    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-      if (StringRef(BC.MRI->getName(R)).equals_insensitive(Name)) {
-        TargetSparedRegs.push_back(R);
-        break;
-      }
-    }
-  }
-
   RegReallocEngine Engine(Function, Extractor, TargetRegNames);
+  FunctionPlan Plan;
+  Engine.planFunction(Plan, TargetRegNames, Opts);
 
-  // Single-Analysis Planning Phase with Global Priority Queue across all target registers
-  SmallVector<ReallocPlanItem, 4> Plan;
-  WebPriorityQueue WorkList;
-
-  for (MCPhysReg SparedReg : TargetSparedRegs) {
-    auto It = CachedWebs.find(SparedReg);
-    if (It == CachedWebs.end())
-      continue;
-
-    for (const RegisterWeb &W : It->second) {
-      WorkList.push(&W);
-      LLVM_DEBUG({
-        dbgs() << "BOLT-DEBUG: [" << getName() << "] Enqueued Web #" << W.WebID
-               << " for " << StringRef(BC.MRI->getName(W.Reg)).upper()
-               << " (Priority=" << W.Priority
-               << ", LiveAtEntry=" << W.LiveAtEntry
-               << ", CrossesCallSite=" << W.CrossesCallSite
-               << ", Insts=" << W.Instructions.size() << ")\n";
-      });
-    }
-  }
-
-  while (!WorkList.empty()) {
-    const RegisterWeb *W = WorkList.top();
-    WorkList.pop();
-
-    MCPhysReg CandReg = Engine.findCandidate(*W, W->Reg, Opts);
-
-    if (CandReg != 0) {
-      Plan.push_back({*W, static_cast<MCPhysReg>(W->Reg), CandReg});
-      Engine.reserveCandidate(CandReg);
-
-      LLVM_DEBUG({
-        dbgs() << "BOLT-DEBUG: [" << getName() << "] Planned reallocation: Web #"
-               << W->WebID << " (" << StringRef(BC.MRI->getName(W->Reg)).upper()
-               << ") -> " << StringRef(BC.MRI->getName(CandReg)).upper()
-               << " (Priority=" << W->Priority
-               << ", LiveAtEntry=" << W->LiveAtEntry
-               << ", CrossesCallSite=" << W->CrossesCallSite << ")\n";
-      });
-    } else {
-      outs() << "  -> [FAILED] [" << getName() << "] Web #" << W->WebID << " ("
-             << StringRef(BC.MRI->getName(W->Reg)).upper()
-             << ") failed in " << Function.getPrintName() << "\n";
-    }
-  }
-
-  // If no webs match strategy criteria, return false (0 changes made)
-  if (Plan.empty())
+  if (Plan.PlannedItems.empty())
     return false;
 
-  LLVM_DEBUG({
-    dbgs() << "BOLT-DEBUG: [" << getName() << "] Executing " << Plan.size()
-           << " planned reallocation(s) on " << Function.getPrintName() << "\n";
-  });
-
-  // Batch Mutation Phase: Apply planned reallocations
-  for (const ReallocPlanItem &Item : Plan) {
-    Engine.applyReallocation(getName(), Item.Web, Item.TargetReg, Item.CandidateReg, Opts);
-  }
-
+  Engine.applyFunctionPlan(Plan);
   return true;
 }
 
 bool RegReallocPassBase::runOnFunction(BinaryFunction &Function, RegAnalysis &RA) {
   DataflowInfoManager Info(Function, &RA, nullptr);
-  RegisterWebExtractor Extractor(Function, Info);
 
   LLVM_DEBUG({
     dbgs() << "BOLT-DEBUG: [Liveness Analysis] " << Function.getPrintName() << "\n";
     printLiveness(Function, Info, dbgs());
   });
 
-  const BinaryContext &BC = Function.getBinaryContext();
+  RegisterWebExtractor Extractor(Function, Info);
+  RegReallocEngine Engine(Function, Extractor, TargetRegNames);
 
-  BitVector SpareTargetRegs(BC.MRI->getNumRegs(), false);
-  for (const std::string &TargetRegName : TargetRegNames) {
-    for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-      if (StringRef(BC.MRI->getName(R)).equals_insensitive(TargetRegName)) {
-        SpareTargetRegs |= BC.MIB->getAliases(R, false);
-        break;
-      }
-    }
-  }
+  FunctionPlan Plan;
+  Engine.planFunction(Plan, TargetRegNames, Opts);
 
-  CachedWebsMap CachedWebs;
-  for (unsigned R = 1; R < BC.MRI->getNumRegs(); ++R) {
-    if (SpareTargetRegs.test(R) && BC.MIB->getRegSize(R) == 8) {
-      std::vector<RegisterWeb> Webs = Extractor.extractWebs(R);
-      if (Webs.empty()) {
-        outs() << "  -> [UNUSED] Target register " << StringRef(BC.MRI->getName(R)).upper()
-               << " is unused in " << Function.getPrintName() << "\n";
-        continue;
-      }
+  if (Plan.PlannedItems.empty())
+    return false;
 
-      CachedWebs[R] = std::move(Webs);
-    }
-  }
-
-  return runWithCachedWebs(Function, CachedWebs, Extractor);
+  Engine.applyFunctionPlan(Plan);
+  return true;
 }
 
 Error RegReallocPassBase::runOnFunctions(BinaryContext &BC) {

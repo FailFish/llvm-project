@@ -17,6 +17,7 @@
 #include "bolt/Core/BinaryFunction.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCRegister.h"
@@ -74,12 +75,17 @@ public:
 
   const FunctionRegContext &getRegContext() const { return RegCtx; }
 
+  /// Checks if CandidateReg conflicts with any previously planned web in Plan.
+  bool isCandidateInterfering(MCPhysReg CandidateReg, const RegisterWeb &W,
+                              const FunctionPlan &Plan) const;
+
   /// Marks a candidate register as reserved for a planned web in this batch.
   void reserveCandidate(MCPhysReg CandidateReg);
 
-  /// Planning Phase: Finds an available candidate register for W excluding reserved candidates.
+  /// Planning Phase: Finds an available candidate register for W using interference checking against Plan.
   MCPhysReg findCandidate(const RegisterWeb &W, MCPhysReg TargetReg,
-                          const RegReallocOptions &Opts) const;
+                          const RegReallocOptions &Opts,
+                          const FunctionPlan &Plan) const;
 
   /// Unified Multi-Pass Planning Phase: Plans all webs for target registers in BF into Plan.
   void planFunction(FunctionPlan &Plan, ArrayRef<std::string> TargetRegNames,

@@ -96,13 +96,47 @@ void RegReallocEngine::reserveCandidate(MCPhysReg CandidateReg) {
   RegCtx.PlannedReservedRegs |= BC.MIB->getAliases(CandidateReg, false);
 }
 
-MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
-                                          MCPhysReg TargetReg,
-                                          const RegReallocOptions &Opts) const {
+bool RegReallocEngine::isCandidateInterfering(
+    MCPhysReg CandidateReg, const RegisterWeb &W,
+    const FunctionPlan &Plan) const {
+  const BinaryContext &BC = BF.getBinaryContext();
+  BitVector CandAliases = BC.MIB->getAliases(CandidateReg, false);
+
+  for (const ReallocPlanItem &Item : Plan.PlannedItems) {
+    BitVector PlannedCandAliases = BC.MIB->getAliases(Item.CandidateReg, false);
+    if (!CandAliases.anyCommon(PlannedCandAliases))
+      continue; // Different physical candidate register, no conflict
+
+    // Check basic block set intersection
+    bool SharedBB = false;
+    for (const BinaryBasicBlock *BB : W.Blocks) {
+      if (Item.Web.Blocks.count(BB)) {
+        SharedBB = true;
+        break;
+      }
+    }
+
+    if (!SharedBB)
+      continue; // Completely disjoint basic blocks -> Safe to share candidate!
+
+    // Shared basic block: check instruction-level overlap
+    DenseSet<const MCInst *> ItemInsts(Item.Web.Instructions.begin(),
+                                       Item.Web.Instructions.end());
+    for (const MCInst *Inst : W.Instructions) {
+      if (ItemInsts.count(Inst))
+        return true; // Overlapping instruction -> Conflict!
+    }
+  }
+
+  return false; // Safe to reuse!
+}
+
+MCPhysReg RegReallocEngine::findCandidate(
+    const RegisterWeb &W, MCPhysReg TargetReg,
+    const RegReallocOptions &Opts, const FunctionPlan &Plan) const {
   const BinaryContext &BC = BF.getBinaryContext();
   BitVector TargetAliases = BC.MIB->getAliases(TargetReg, false);
 
-  // Check if web demands match strategy options
   if (W.LiveAtEntry && !Opts.EvictEntryArg)
     return 0;
   if (W.CrossesCallSite && !Opts.ShiftCalleeSaved)
@@ -122,19 +156,16 @@ MCPhysReg RegReallocEngine::findCandidate(const RegisterWeb &W,
     if (!RegCtx.CandidatePool.anyCommon(CandAliases))
       continue;
 
-    // Check if candidate register is already reserved by a planned web in this batch
-    if (RegCtx.PlannedReservedRegs.anyCommon(CandAliases))
+    // Check interference against Plan state
+    if (isCandidateInterfering(RegIdx, W, Plan))
       continue;
 
     bool CandIsCalleeSaved = RegCtx.CalleeSavedRegs.test(RegIdx);
     bool IsABIArg = RegCtx.ABIArgRegs.anyCommon(CandAliases);
 
-    // Strategy-based candidate set partitioning (register_sparing_strategy.md Section 5)
-    // Direct Swap (0 added cost): Volatile -> Callee adds new push/pop (Not allowed in 0-cost swap)
     if (!Opts.ShiftCalleeSaved && !TargetIsCalleeSaved && CandIsCalleeSaved)
       continue;
 
-    // Phase 2 (CalleeShift / ArgCalleeEviction): Callee-saved candidates ONLY
     if (Opts.ShiftCalleeSaved && !CandIsCalleeSaved)
       continue;
 
@@ -219,7 +250,7 @@ void RegReallocEngine::planFunction(FunctionPlan &Plan,
     StrategyPhase ChosenPhase;
 
     for (const StrategyPhase &Phase : Phases) {
-      MCPhysReg CandReg = findCandidate(*W, W->Reg, Phase.Opts);
+      MCPhysReg CandReg = findCandidate(*W, W->Reg, Phase.Opts, Plan);
       if (CandReg != 0) {
         AllocatedCand = CandReg;
         ChosenPhase = Phase;

@@ -330,22 +330,25 @@ void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
 
     // Epilogue Pop on all return exits (ONCE per candidate register)
     for (BinaryBasicBlock &BB : BF) {
-      if (BB.succ_empty() || (!BB.empty() && (BC.MIB->isReturn(*BB.rbegin()) || BC.MIB->isTailCall(*BB.rbegin())))) {
-        auto ExitIt = BB.end();
-        if (!BB.empty() && (BC.MIB->isReturn(*BB.rbegin()) || BC.MIB->isTailCall(*BB.rbegin())))
-          ExitIt = std::prev(BB.end());
+      if (BB.empty())
+        continue;
 
-        MCInst PopInst;
-        BC.MIB->createPopRegister(PopInst, CandidateReg, 8);
-        auto PopIt = BB.insertInstruction(ExitIt, PopInst);
-        auto PopCFIIt = std::next(PopIt);
-        PopCFIIt = BF.addCFIInstruction(
-            &BB, PopCFIIt, MCCFIInstruction::createAdjustCfaOffset(nullptr, -8));
-        BF.addCFIInstruction(
-            &BB, PopCFIIt,
-            MCCFIInstruction::createSameValue(
-                nullptr, BC.MRI->getDwarfRegNum(CandidateReg, false)));
-      }
+      const MCInst &LastInst = *BB.rbegin();
+      if (!BC.MIB->isReturn(LastInst) && !BC.MIB->isTailCall(LastInst))
+        continue;
+
+      auto ExitIt = std::prev(BB.end());
+
+      MCInst PopInst;
+      BC.MIB->createPopRegister(PopInst, CandidateReg, 8);
+      auto PopIt = BB.insertInstruction(ExitIt, PopInst);
+      auto PopCFIIt = std::next(PopIt);
+      PopCFIIt = BF.addCFIInstruction(
+          &BB, PopCFIIt, MCCFIInstruction::createAdjustCfaOffset(nullptr, -8));
+      BF.addCFIInstruction(
+          &BB, PopCFIIt,
+          MCCFIInstruction::createSameValue(
+              nullptr, BC.MRI->getDwarfRegNum(CandidateReg, false)));
     }
   }
 

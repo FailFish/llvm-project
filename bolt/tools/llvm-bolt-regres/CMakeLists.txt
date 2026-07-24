@@ -13,6 +13,7 @@ add_bolt_tool(llvm-bolt-regres
   RegReallocEngine.cpp
   RegReallocPasses.cpp
   SpareRegisters.cpp
+  PseudoRewriter.cpp
   DISABLE_LLVM_LINK_LLVM_DYLIB
   )
 

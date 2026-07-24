@@ -108,27 +108,13 @@ bool RegReallocEngine::isCandidateInterfering(
       continue; // Different physical candidate register, no conflict
 
     // Check basic block set intersection
-    bool SharedBB = false;
     for (const BinaryBasicBlock *BB : W.Blocks) {
-      if (Item.Web.Blocks.count(BB)) {
-        SharedBB = true;
-        break;
-      }
-    }
-
-    if (!SharedBB)
-      continue; // Completely disjoint basic blocks -> Safe to share candidate!
-
-    // Shared basic block: check instruction-level overlap
-    DenseSet<const MCInst *> ItemInsts(Item.Web.Instructions.begin(),
-                                       Item.Web.Instructions.end());
-    for (const MCInst *Inst : W.Instructions) {
-      if (ItemInsts.count(Inst))
-        return true; // Overlapping instruction -> Conflict!
+      if (Item.Web.Blocks.count(BB))
+        return true; // Shared basic block -> Conflict! Candidate cannot be shared within the same basic block.
     }
   }
 
-  return false; // Safe to reuse!
+  return false; // Completely disjoint basic blocks -> Safe to share candidate!
 }
 
 MCPhysReg RegReallocEngine::findCandidate(
@@ -297,19 +283,40 @@ void RegReallocEngine::applyReallocation(StringRef PassName,
     }
   }
 
-  // 2. Perform Entry Eviction if requested
+  std::string ExtraOps = "";
+  if (Opts.ShiftCalleeSaved && Opts.EvictEntryArg)
+    ExtraOps = " [+push/pop, +mov]";
+  else if (Opts.ShiftCalleeSaved)
+    ExtraOps = " [+push/pop]";
+  else if (Opts.EvictEntryArg)
+    ExtraOps = " [+mov]";
+
+  outs() << "  -> [SUCCESS] [" << PassName << "] Web #" << W.WebID << " (" << SparedName
+         << ") -> " << CandName << ExtraOps << " in " << BF.getPrintName() << "\n";
+}
+
+void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
+  const BinaryContext &BC = BF.getBinaryContext();
   BinaryBasicBlock &EntryBB = *BF.begin();
-  if (Opts.EvictEntryArg && !Opts.ShiftCalleeSaved) {
-    MCInst MovInst;
-    MovInst.setOpcode(X86::MOV64rr);
-    MovInst.addOperand(MCOperand::createReg(CandidateReg));
-    MovInst.addOperand(MCOperand::createReg(TargetReg));
-    EntryBB.insertInstruction(EntryBB.begin(), MovInst);
+
+  // 1. Rename operands across all planned webs
+  for (const ReallocPlanItem &Item : Plan.PlannedItems) {
+    applyReallocation(Item.PassName, Item.Web, Item.TargetReg, Item.CandidateReg, Item.Opts);
   }
 
-  // 3. Perform Callee-Saved Shift (prologue push & epilogue pop + DWARF CFI) if requested
-  if (Opts.ShiftCalleeSaved) {
-    // Prologue Push
+  // 2. Insert Deduplicated Prologue Pushes & Epilogue Pops for Callee-Saved Shift Candidates
+  BitVector ProcessedPushes(BC.MRI->getNumRegs(), false);
+  for (const ReallocPlanItem &Item : Plan.PlannedItems) {
+    if (!Item.Opts.ShiftCalleeSaved)
+      continue;
+
+    MCPhysReg CandidateReg = Item.CandidateReg;
+    if (ProcessedPushes.test(CandidateReg))
+      continue; // Prologue push / epilogue pop already inserted once for this candidate!
+
+    ProcessedPushes.set(CandidateReg);
+
+    // Prologue Push (ONCE per candidate register)
     MCInst PushInst;
     BC.MIB->createPushRegister(PushInst, CandidateReg, 8);
     auto PushIt = EntryBB.insertInstruction(EntryBB.begin(), PushInst);
@@ -321,15 +328,7 @@ void RegReallocEngine::applyReallocation(StringRef PassName,
         MCCFIInstruction::createOffset(
             nullptr, BC.MRI->getDwarfRegNum(CandidateReg, false), -8));
 
-    if (Opts.EvictEntryArg) {
-      MCInst MovInst;
-      MovInst.setOpcode(X86::MOV64rr);
-      MovInst.addOperand(MCOperand::createReg(CandidateReg));
-      MovInst.addOperand(MCOperand::createReg(TargetReg));
-      EntryBB.insertInstruction(CFIIt, MovInst);
-    }
-
-    // Epilogue Pop on all return exits
+    // Epilogue Pop on all return exits (ONCE per candidate register)
     for (BinaryBasicBlock &BB : BF) {
       if (BB.succ_empty() || (!BB.empty() && (BC.MIB->isReturn(*BB.rbegin()) || BC.MIB->isTailCall(*BB.rbegin())))) {
         auto ExitIt = BB.end();
@@ -350,21 +349,29 @@ void RegReallocEngine::applyReallocation(StringRef PassName,
     }
   }
 
-  std::string ExtraOps = "";
-  if (Opts.ShiftCalleeSaved && Opts.EvictEntryArg)
-    ExtraOps = " [+push/pop, +mov]";
-  else if (Opts.ShiftCalleeSaved)
-    ExtraOps = " [+push/pop]";
-  else if (Opts.EvictEntryArg)
-    ExtraOps = " [+mov]";
-
-  outs() << "  -> [SUCCESS] [" << PassName << "] Web #" << W.WebID << " (" << SparedName
-         << ") -> " << CandName << ExtraOps << " in " << BF.getPrintName() << "\n";
-}
-
-void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
+  // 3. Insert Deduplicated Entry Mov Evictions
+  DenseSet<std::pair<unsigned, unsigned>> ProcessedEvictions;
   for (const ReallocPlanItem &Item : Plan.PlannedItems) {
-    applyReallocation(Item.PassName, Item.Web, Item.TargetReg, Item.CandidateReg, Item.Opts);
+    if (!Item.Opts.EvictEntryArg)
+      continue;
+
+    auto Pair = std::make_pair(Item.TargetReg, Item.CandidateReg);
+    if (ProcessedEvictions.count(Pair))
+      continue; // Entry mov already inserted once for this target -> candidate pair!
+
+    ProcessedEvictions.insert(Pair);
+
+    MCInst MovInst;
+    MovInst.setOpcode(X86::MOV64rr);
+    MovInst.addOperand(MCOperand::createReg(Item.CandidateReg));
+    MovInst.addOperand(MCOperand::createReg(Item.TargetReg));
+
+    // Insert after prologue pushes if any exist
+    auto InsertPos = EntryBB.begin();
+    while (InsertPos != EntryBB.end() && BC.MIB->isPush(*InsertPos))
+      ++InsertPos;
+
+    EntryBB.insertInstruction(InsertPos, MovInst);
   }
 }
 

@@ -44,6 +44,7 @@ struct ReallocPlanItem {
 struct FunctionPlan {
   BitVector PlannedProloguePushedRegs;
   SmallVector<ReallocPlanItem, 8> PlannedItems;
+  bool HasPseudoInstructions = false;
 };
 
 /// Encapsulates per-function register classification state.
@@ -97,7 +98,7 @@ public:
                          MCPhysReg CandidateReg, const RegReallocOptions &Opts);
 
   /// Single Batch Mutation Phase: Applies all planned reallocations in FunctionPlan.
-  void applyFunctionPlan(const FunctionPlan &Plan);
+  void applyFunctionPlan(FunctionPlan &Plan);
 };
 
 } // namespace bolt

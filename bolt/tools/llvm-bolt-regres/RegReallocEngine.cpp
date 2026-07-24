@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RegReallocEngine.h"
+#include "PseudoRewriter.h"
 #include "bolt/Core/MCPlus.h"
 #include "bolt/Core/MCPlusBuilder.h"
 #include "llvm/MC/MCInstBuilder.h"
@@ -320,7 +321,7 @@ void RegReallocEngine::applyReallocation(StringRef PassName,
          << ") -> " << CandName << ExtraOps << " in " << BF.getPrintName() << "\n";
 }
 
-void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
+void RegReallocEngine::applyFunctionPlan(FunctionPlan &Plan) {
   const BinaryContext &BC = BF.getBinaryContext();
   BinaryBasicBlock &EntryBB = *BF.begin();
 
@@ -329,7 +330,7 @@ void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
     applyReallocation(Item.PassName, Item.Web, Item.TargetReg, Item.CandidateReg, Item.Opts);
   }
 
-  // 2. Insert Deduplicated Prologue Pushes & Epilogue Pops for Callee-Saved Shift Candidates
+  // 2. Insert Deduplicated PseudoSpillSave & PseudoSpillRestore for Callee-Saved Shift Candidates
   BitVector ProcessedPushes(BC.MRI->getNumRegs(), false);
   for (const ReallocPlanItem &Item : Plan.PlannedItems) {
     if (!Item.Opts.ShiftCalleeSaved)
@@ -337,23 +338,15 @@ void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
 
     MCPhysReg CandidateReg = Item.CandidateReg;
     if (ProcessedPushes.test(CandidateReg))
-      continue; // Prologue push / epilogue pop already inserted once for this candidate!
+      continue; // Pseudo spill already created once for this candidate!
 
     ProcessedPushes.set(CandidateReg);
+    Plan.HasPseudoInstructions = true;
 
-    // Prologue Push (ONCE per candidate register)
-    MCInst PushInst;
-    BC.MIB->createPushRegister(PushInst, CandidateReg, 8);
-    auto PushIt = EntryBB.insertInstruction(EntryBB.begin(), PushInst);
-    auto CFIIt = std::next(PushIt);
-    CFIIt = BF.addCFIInstruction(
-        &EntryBB, CFIIt, MCCFIInstruction::createAdjustCfaOffset(nullptr, 8));
-    CFIIt = BF.addCFIInstruction(
-        &EntryBB, CFIIt,
-        MCCFIInstruction::createOffset(
-            nullptr, BC.MRI->getDwarfRegNum(CandidateReg, false), -8));
+    // Emit PseudoSpillSave at prologue entry
+    createPseudoSpillSave(const_cast<BinaryContext &>(BC), EntryBB, CandidateReg, Item.TargetReg);
 
-    // Epilogue Pop on all return exits (ONCE per candidate register)
+    // Emit PseudoSpillRestore on all return exit blocks
     for (BinaryBasicBlock &BB : BF) {
       if (BB.empty())
         continue;
@@ -363,21 +356,11 @@ void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
         continue;
 
       auto ExitIt = std::prev(BB.end());
-
-      MCInst PopInst;
-      BC.MIB->createPopRegister(PopInst, CandidateReg, 8);
-      auto PopIt = BB.insertInstruction(ExitIt, PopInst);
-      auto PopCFIIt = std::next(PopIt);
-      PopCFIIt = BF.addCFIInstruction(
-          &BB, PopCFIIt, MCCFIInstruction::createAdjustCfaOffset(nullptr, -8));
-      BF.addCFIInstruction(
-          &BB, PopCFIIt,
-          MCCFIInstruction::createSameValue(
-              nullptr, BC.MRI->getDwarfRegNum(CandidateReg, false)));
+      createPseudoSpillRestore(const_cast<BinaryContext &>(BC), BB, ExitIt, CandidateReg, Item.TargetReg);
     }
   }
 
-  // 3. Insert Deduplicated Entry Mov Evictions
+  // 3. Insert Deduplicated PseudoRegMove Entry Evictions
   DenseSet<std::pair<unsigned, unsigned>> ProcessedEvictions;
   for (const ReallocPlanItem &Item : Plan.PlannedItems) {
     if (!Item.Opts.EvictEntryArg)
@@ -385,21 +368,23 @@ void RegReallocEngine::applyFunctionPlan(const FunctionPlan &Plan) {
 
     auto Pair = std::make_pair(Item.TargetReg, Item.CandidateReg);
     if (ProcessedEvictions.count(Pair))
-      continue; // Entry mov already inserted once for this target -> candidate pair!
+      continue; // Entry PseudoRegMove already created once for this target -> candidate pair!
 
     ProcessedEvictions.insert(Pair);
+    Plan.HasPseudoInstructions = true;
 
-    MCInst MovInst;
-    MovInst.setOpcode(X86::MOV64rr);
-    MovInst.addOperand(MCOperand::createReg(Item.CandidateReg));
-    MovInst.addOperand(MCOperand::createReg(Item.TargetReg));
-
-    // Insert after prologue pushes if any exist
+    // Insert PseudoRegMove after prologue pushes if any exist
     auto InsertPos = EntryBB.begin();
     while (InsertPos != EntryBB.end() && BC.MIB->isPush(*InsertPos))
       ++InsertPos;
 
-    EntryBB.insertInstruction(InsertPos, MovInst);
+    createPseudoRegMove(const_cast<BinaryContext &>(BC), EntryBB, InsertPos, Item.CandidateReg, Item.TargetReg);
+  }
+
+  // 4. Automatically lower pseudo instructions if any were created
+  if (Plan.HasPseudoInstructions) {
+    PseudoRewriter Rewriter(BF);
+    Rewriter.runOnFunction();
   }
 }
 

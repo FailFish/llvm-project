@@ -50,6 +50,7 @@ struct FunctionPlan {
 struct FunctionRegContext {
   BitVector GPRegs;
   BitVector CalleeSavedRegs;
+  BitVector PreSavedRegs;
   BitVector CandidatePool;
   BitVector ExpUsedInFunc;
   BitVector ABIArgRegs;

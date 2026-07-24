@@ -28,6 +28,25 @@
 namespace llvm {
 namespace bolt {
 
+static BitVector discoverPreSavedRegisters(const BinaryFunction &BF) {
+  const BinaryContext &BC = BF.getBinaryContext();
+  BitVector PreSaved(BC.MRI->getNumRegs(), false);
+
+  if (!BF.empty()) {
+    const BinaryBasicBlock &EntryBB = *BF.begin();
+    for (const MCInst &Inst : EntryBB) {
+      if (BC.MIB->isPush(Inst)) {
+        for (const MCOperand &Op : MCPlus::primeOperands(Inst)) {
+          if (Op.isReg())
+            PreSaved.set(Op.getReg());
+        }
+      }
+    }
+  }
+
+  return PreSaved;
+}
+
 FunctionRegContext FunctionRegContext::create(
     const BinaryFunction &BF, ArrayRef<std::string> TargetRegNames) {
   const BinaryContext &BC = BF.getBinaryContext();
@@ -38,6 +57,7 @@ FunctionRegContext FunctionRegContext::create(
 
   Ctx.CalleeSavedRegs.resize(BC.MRI->getNumRegs(), false);
   BC.MIB->getCalleeSavedRegs(Ctx.CalleeSavedRegs);
+  Ctx.PreSavedRegs = discoverPreSavedRegisters(BF);
 
   BitVector SpareTargetRegs(BC.MRI->getNumRegs(), false);
   for (const std::string &TargetRegName : TargetRegNames) {
@@ -149,10 +169,15 @@ MCPhysReg RegReallocEngine::findCandidate(
     bool CandIsCalleeSaved = RegCtx.CalleeSavedRegs.test(RegIdx);
     bool IsABIArg = RegCtx.ABIArgRegs.anyCommon(CandAliases);
 
-    if (!Opts.ShiftCalleeSaved && !TargetIsCalleeSaved && CandIsCalleeSaved)
+    // A web is self-preserving if target or candidate register is already pushed by the prologue
+    bool IsTargetPreSaved = RegCtx.PreSavedRegs.test(TargetReg);
+    bool IsCandPreSaved = RegCtx.PreSavedRegs.anyCommon(CandAliases);
+    bool SelfPreserving = IsTargetPreSaved || IsCandPreSaved;
+
+    if (!Opts.ShiftCalleeSaved && !TargetIsCalleeSaved && CandIsCalleeSaved && !SelfPreserving)
       continue;
 
-    if (Opts.ShiftCalleeSaved && !CandIsCalleeSaved)
+    if (Opts.ShiftCalleeSaved && (!CandIsCalleeSaved || SelfPreserving))
       continue;
 
     if (Opts.EvictEntryArg && IsABIArg)

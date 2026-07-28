@@ -144,12 +144,13 @@ MCPhysReg RegReallocEngine::findCandidate(
   const BinaryContext &BC = BF.getBinaryContext();
   BitVector TargetAliases = BC.MIB->getAliases(TargetReg, false);
 
-  if (W.LiveAtEntry && !Opts.EvictEntryArg)
+  bool TargetIsCalleeSaved = RegCtx.CalleeSavedRegs.test(TargetReg);
+  bool IsTargetPreSaved = RegCtx.PreSavedRegs.test(TargetReg);
+
+  if (W.LiveAtEntry && !Opts.EvictEntryArg && !IsTargetPreSaved)
     return 0;
   if (W.CrossesCallSite && !Opts.ShiftCalleeSaved)
     return 0;
-
-  bool TargetIsCalleeSaved = RegCtx.CalleeSavedRegs.test(TargetReg);
 
   for (size_t RegIdx : RegCtx.RankedRegs) {
     if (!RegCtx.GPRegs[RegIdx] || BC.MIB->getRegSize(RegIdx) != 8)

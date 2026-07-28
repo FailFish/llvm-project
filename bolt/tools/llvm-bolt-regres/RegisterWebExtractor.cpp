@@ -92,8 +92,6 @@ bool RegisterWebExtractor::isRegLiveAcrossEdge(
 std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
   std::vector<RegisterWeb> Webs;
   BitVector RegAliases = BC.MIB->getAliases(Reg, /*OnlySmaller=*/false);
-  BitVector ABIArgRegs = BC.MIB->getRegsUsedAsParams();
-  bool IsABIArgReg = RegAliases.anyCommon(ABIArgRegs);
 
   // 1. Identify active basic blocks for Reg
   std::vector<const BinaryBasicBlock *> ActiveBlocks;
@@ -149,16 +147,14 @@ std::vector<RegisterWeb> RegisterWebExtractor::extractWebs(MCRegister Reg) {
       }
     }
 
-    // 4. Compute LiveAtEntry (only genuine incoming ABI argument registers)
-    if (IsABIArgReg) {
-      for (const BinaryBasicBlock *BB : W.Blocks) {
-        if (BB == &*BF.begin() || BB->pred_size() == 0) {
-          ProgramPoint FirstPP =
-              ProgramPoint::getFirstPointAt(const_cast<BinaryBasicBlock &>(*BB));
-          if (LA.isAlive(FirstPP, Reg)) {
-            W.LiveAtEntry = true;
-            break;
-          }
+    // 4. Compute LiveAtEntry via Liveness Analysis
+    for (const BinaryBasicBlock *BB : W.Blocks) {
+      if (BB == &*BF.begin() || BB->pred_size() == 0) {
+        ProgramPoint FirstPP =
+            ProgramPoint::getFirstPointAt(const_cast<BinaryBasicBlock &>(*BB));
+        if (LA.isAlive(FirstPP, Reg)) {
+          W.LiveAtEntry = true;
+          break;
         }
       }
     }

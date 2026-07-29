@@ -154,9 +154,13 @@ public:
         PendingRelocations(Section.PendingRelocations), OutputName(Name.str()),
         SectionNumber(++Count) {}
 
+  // TODO: better way to pass an arbitrary address (ObjectSection?)
   BinarySection(BinaryContext &BC, SectionRef Section)
       : BC(BC), Name(getName(Section)), Section(Section),
-        Contents(getContentsOrQuit(Section)), Address(Section.getAddress()),
+        Contents(getContentsOrQuit(Section)),
+        Address(Section.getAddress()
+                    ? Section.getAddress()
+                    : (Section.getIndex() * 0x100000000ULL)),
         Size(Section.getSize()), Alignment(Section.getAlignment().value()),
         OutputName(Name), SectionNumber(++Count) {
     if (isELF()) {

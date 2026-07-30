@@ -8,7 +8,8 @@
 //
 // Pipeline Manager Pass orchestrating register reallocation strategies in cost
 // hierarchy order with cross-pass cached web reuse:
-// DirectRegRealloc -> ArgRegRealloc -> CalleeRegRealloc -> ArgCalleeRegRealloc.
+// DirectRegRealloc -> ArgRegRealloc -> CalleeRegRealloc -> ArgCalleeRegRealloc
+// with single-pass fallback reserved register elimination.
 //
 //===----------------------------------------------------------------------===//
 
@@ -16,6 +17,7 @@
 #define BOLT_TOOLS_LLVM_BOLT_OBJ_CFG_SPAREREGISTERS_H
 
 #include "RegReallocPasses.h"
+#include "ReservedRegLoweringPass.h"
 #include "bolt/Core/BinaryContext.h"
 #include "bolt/Core/BinaryFunction.h"
 #include "bolt/Passes/DataflowInfoManager.h"
@@ -39,13 +41,19 @@ enum class SpareStrategyMode {
 
 class SpareRegisters {
 private:
-  SmallVector<std::string, 4> TargetRegNames;
+  SmallVector<ReservedRegConfig, 4> TargetConfigs;
+  VirtRegStorage TempScratchStorage;
   SpareStrategyMode StrategyMode;
 
+  SmallVector<std::string, 4> getTargetRegNames() const;
+  SmallVector<ReservedRegConfig, 4> getNotFullySparedConfigs(const BinaryFunction &BF,
+                                                             const FunctionPlan &Plan) const;
+
 public:
-  SpareRegisters(ArrayRef<std::string> TargetRegs = {"R11", "R14", "R15"},
-                 SpareStrategyMode Mode = SpareStrategyMode::All)
-      : TargetRegNames(TargetRegs.begin(), TargetRegs.end()), StrategyMode(Mode) {}
+  /// Primary Constructor: Explicitly pass target register configurations, scratch storage, and strategy
+  SpareRegisters(ArrayRef<ReservedRegConfig> TargetConfigs,
+                 VirtRegStorage TempScratchStorage,
+                 SpareStrategyMode Mode);
 
   static void printLiveness(BinaryFunction &BF, DataflowInfoManager &Info, raw_ostream &OS = outs());
   bool runOnFunction(BinaryFunction &Function, RegAnalysis &RA);

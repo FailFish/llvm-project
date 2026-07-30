@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SpareRegisters.h"
+#include "MCTargetDesc/X86MCTargetDesc.h"
 #include "bolt/Core/MCPlusBuilder.h"
 #include "bolt/Core/Relocation.h"
 #include "bolt/Rewrite/ObjectRewriteInstance.h"
@@ -169,7 +170,15 @@ int main(int argc, char **argv) {
     if (TargetRegs.empty())
       TargetRegs = {"R11", "R14", "R15"};
 
-    SpareRegisters Pass(TargetRegs, opts::SpareStrategyOpt);
+    SmallVector<ReservedRegConfig, 4> Configs;
+    int32_t TLSOffsetCounter = 40;
+    for (const std::string &Name : TargetRegs) {
+      Configs.emplace_back(Name, VirtRegStorage::createTLSBaseReg(TLSOffsetCounter, X86::R15));
+      TLSOffsetCounter += 8;
+    }
+
+    VirtRegStorage TempScratch = VirtRegStorage::createTLSBaseReg(32, X86::R15);
+    SpareRegisters Pass(Configs, TempScratch, opts::SpareStrategyOpt);
     cantFail(Pass.runOnFunctions(ORI.getBinaryContext()));
   }
 

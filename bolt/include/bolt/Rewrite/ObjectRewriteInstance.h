@@ -62,6 +62,13 @@ public:
   /// Print CFGs of disassembled functions.
   void printCFGs(raw_ostream &OS);
 
+  /// Capture disassembly representation lines of a function.
+  std::vector<std::string> disassembleFunctionLines(const BinaryFunction &BF) const;
+
+  /// Print unified diff of disassembled functions before and after modifications.
+  void printDiff(const std::map<const BinaryFunction *, std::vector<std::string>>
+                     &OriginalFuncLines) const;
+
   /// Emit the rewritten object file to \p OutputFilename.
   void emitObjectFile(StringRef OutputFilename);
 

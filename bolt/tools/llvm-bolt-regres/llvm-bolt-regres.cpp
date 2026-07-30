@@ -139,6 +139,14 @@ int main(int argc, char **argv) {
     ORI.printCFGs(outs());
   }
 
+  std::map<const BinaryFunction *, std::vector<std::string>> OriginalFuncLines;
+  if (opts::PrintDiff) {
+    for (auto &BFI : ORI.getBinaryContext().getBinaryFunctions()) {
+      OriginalFuncLines[&BFI.second] =
+          ORI.disassembleFunctionLines(BFI.second);
+    }
+  }
+
   if (!opts::NoSpareRegs) {
     SmallVector<std::string, 4> TargetRegs(opts::SpareTargetRegsOpt.begin(),
                                            opts::SpareTargetRegsOpt.end());
@@ -147,6 +155,10 @@ int main(int argc, char **argv) {
 
     SpareRegisters Pass(TargetRegs, opts::SpareStrategyOpt);
     cantFail(Pass.runOnFunctions(ORI.getBinaryContext()));
+  }
+
+  if (opts::PrintDiff) {
+    ORI.printDiff(OriginalFuncLines);
   }
 
   if (!opts::OutputFilename.empty()) {

@@ -443,6 +443,83 @@ void ObjectRewriteInstance::printCFGs(raw_ostream &OS) {
   }
 }
 
+std::vector<std::string>
+ObjectRewriteInstance::disassembleFunctionLines(const BinaryFunction &BF) const {
+  std::vector<std::string> Lines;
+  for (const BinaryBasicBlock &BB : BF) {
+    Lines.push_back(BB.getName().str() + ":");
+    for (const MCInst &Inst : BB) {
+      std::string InstStr;
+      raw_string_ostream SS(InstStr);
+      BC->printInstruction(SS, Inst, 0, &BF, /*PrintMCInst=*/false,
+                           /*PrintMemData=*/false, /*PrintRelocations=*/false,
+                           /*Endl=*/"");
+      Lines.push_back("  " + SS.str());
+    }
+  }
+  return Lines;
+}
+
+void ObjectRewriteInstance::printDiff(
+    const std::map<const BinaryFunction *, std::vector<std::string>>
+        &OriginalFuncLines) const {
+  for (auto &BFI : BC->getBinaryFunctions()) {
+    const BinaryFunction &BF = BFI.second;
+    if (!opts::FilterFunc.empty() && !BF.hasNameRegex(opts::FilterFunc))
+      continue;
+
+    auto It = OriginalFuncLines.find(&BF);
+    if (It == OriginalFuncLines.end())
+      continue;
+
+    const std::vector<std::string> &Before = It->second;
+    std::vector<std::string> After = disassembleFunctionLines(BF);
+
+    if (Before == After)
+      continue;
+
+    outs() << "--- a/" << BF.getPrintName() << "\n";
+    outs() << "+++ b/" << BF.getPrintName() << "\n";
+    outs() << "@@ -1," << Before.size() << " +1," << After.size() << " @@\n";
+
+    size_t i = 0, j = 0;
+    while (i < Before.size() || j < After.size()) {
+      if (i < Before.size() && j < After.size() && Before[i] == After[j]) {
+        outs() << "  " << Before[i] << "\n";
+        i++;
+        j++;
+      } else {
+        size_t MatchI = i, MatchJ = j;
+        bool FoundMatch = false;
+        for (size_t lookI = i; lookI < Before.size() && !FoundMatch; ++lookI) {
+          for (size_t lookJ = j; lookJ < After.size() && !FoundMatch; ++lookJ) {
+            if (Before[lookI] == After[lookJ]) {
+              MatchI = lookI;
+              MatchJ = lookJ;
+              FoundMatch = true;
+            }
+          }
+        }
+        if (FoundMatch) {
+          while (i < MatchI) {
+            outs() << "- " << Before[i++] << "\n";
+          }
+          while (j < MatchJ) {
+            outs() << "+ " << After[j++] << "\n";
+          }
+        } else {
+          while (i < Before.size()) {
+            outs() << "- " << Before[i++] << "\n";
+          }
+          while (j < After.size()) {
+            outs() << "+ " << After[j++] << "\n";
+          }
+        }
+      }
+    }
+  }
+}
+
 void ObjectRewriteInstance::emitObjectFile(StringRef OutputFilename) {
   std::error_code EC;
   raw_fd_ostream OS(OutputFilename, EC, sys::fs::OF_None);

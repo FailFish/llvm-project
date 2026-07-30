@@ -79,16 +79,22 @@ FunctionRegContext FunctionRegContext::create(
 
   Ctx.PlannedReservedRegs.resize(BC.MRI->getNumRegs(), false);
 
-  // ExpUsedInFunc: Physical registers explicitly used as instruction operands
-  Ctx.ExpUsedInFunc.resize(BC.MRI->getNumRegs(), false);
+  // UsedInFunc: Physical registers used as explicit or implicit operands
+  Ctx.UsedInFunc.resize(BC.MRI->getNumRegs(), false);
   for (const BinaryBasicBlock &BB : BF) {
     for (const MCInst &Inst : BB) {
       for (const MCOperand &Op : MCPlus::primeOperands(Inst)) {
         if (Op.isReg())
-          Ctx.ExpUsedInFunc |= BC.MIB->getAliases(Op.getReg(), false);
+          Ctx.UsedInFunc |= BC.MIB->getAliases(Op.getReg(), false);
       }
+      const MCInstrDesc &Desc = BC.MII->get(Inst.getOpcode());
+      for (MCPhysReg ImpUse : Desc.implicit_uses())
+        Ctx.UsedInFunc |= BC.MIB->getAliases(ImpUse, false);
+      for (MCPhysReg ImpDef : Desc.implicit_defs())
+        Ctx.UsedInFunc |= BC.MIB->getAliases(ImpDef, false);
     }
   }
+  BC.MIB->getDefaultLiveOut(Ctx.UsedInFunc);
 
   Ctx.ABIArgRegs = BC.MIB->getRegsUsedAsParams();
 
@@ -100,8 +106,8 @@ FunctionRegContext FunctionRegContext::create(
                      BitVector AliasesA = BC.MIB->getAliases(A, false);
                      BitVector AliasesB = BC.MIB->getAliases(B, false);
 
-                     bool UnusedA = !Ctx.ExpUsedInFunc.anyCommon(AliasesA);
-                     bool UnusedB = !Ctx.ExpUsedInFunc.anyCommon(AliasesB);
+                     bool UnusedA = !Ctx.UsedInFunc.anyCommon(AliasesA);
+                     bool UnusedB = !Ctx.UsedInFunc.anyCommon(AliasesB);
 
                      if (UnusedA != UnusedB)
                        return UnusedA > UnusedB;
@@ -185,7 +191,7 @@ MCPhysReg RegReallocEngine::findCandidate(
     if (Opts.EvictEntryArg && IsABIArg)
       continue;
 
-    bool IsUsedInFunc = RegCtx.ExpUsedInFunc.anyCommon(CandAliases);
+    bool IsUsedInFunc = RegCtx.UsedInFunc.anyCommon(CandAliases);
     if (IsUsedInFunc && Extractor.isLiveDuringWeb(RegIdx, W))
       continue;
 

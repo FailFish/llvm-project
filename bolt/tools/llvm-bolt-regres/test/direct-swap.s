@@ -16,16 +16,16 @@ test_direct_swap_volatile:
   movq $0, %rax             # Entry BB (does not touch R11)
 
 .Lloop_header1:
-# CHECK:       movq $0xa, %rcx
-# CHECK-NEXT:  cmpq $0x0, %rcx
+# CHECK:       movq $0xa, %rsi
+# CHECK-NEXT:  cmpq $0x0, %rsi
 # CHECK-NEXT:  jle {{.*}}
   movq $10, %r11            # R11 initialized here
   cmpq $0, %r11
   jle .Lexit1
 
 .Lloop_body1:
-# CHECK:       addq (%rdi,%rcx,8), %rax
-# CHECK-NEXT:  decq %rcx
+# CHECK:       addq (%rdi,%rsi,8), %rax
+# CHECK-NEXT:  decq %rsi
 # CHECK-NEXT:  jmp {{.*}}
   addq (%rdi, %r11, 8), %rax
   decq %r11

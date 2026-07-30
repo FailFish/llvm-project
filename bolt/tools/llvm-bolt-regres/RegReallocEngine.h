@@ -53,7 +53,7 @@ struct FunctionRegContext {
   BitVector CalleeSavedRegs;
   BitVector PreSavedRegs;
   BitVector CandidatePool;
-  BitVector ExpUsedInFunc;
+  BitVector UsedInFunc;
   BitVector ABIArgRegs;
   BitVector PlannedReservedRegs;
   SmallVector<size_t, 16> RankedRegs;

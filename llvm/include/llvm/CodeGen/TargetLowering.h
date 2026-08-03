@@ -2204,6 +2204,27 @@ public:
   getSafeStackPointerLocation(IRBuilderBase &IRB,
                               const LibcallLoweringInfo &Libcalls) const;
 
+  /// Dimensions of the varargs register save area, i.e. the block of memory
+  /// that a va_list's reg_save_area field points into.
+  struct VarArgsSaveAreaInfo {
+    uint64_t Size;
+    Align Alignment;
+  };
+
+  /// Returns the size and alignment of the varargs register save area for \p F,
+  /// or std::nullopt if this target cannot relocate that area onto the
+  /// SafeStack unsafe stack.
+  ///
+  /// When a target opts in, the SafeStack pass reserves a slot of these
+  /// dimensions in the unsafe frame and hands its address to instruction
+  /// selection via llvm.safestack.vararg.save.regs and llvm.va_start.safestack.
+  /// Returning std::nullopt leaves llvm.va_start untouched, so the feature
+  /// degrades gracefully to the target's normal lowering.
+  virtual std::optional<VarArgsSaveAreaInfo>
+  getVarArgsSaveAreaInfo(const Function &F) const {
+    return std::nullopt;
+  }
+
   /// Returns the name of the symbol used to emit stack probes or the empty
   /// string if not applicable.
   virtual bool hasStackProbeSymbol(const MachineFunction &MF) const { return false; }

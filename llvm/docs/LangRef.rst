@@ -14361,6 +14361,90 @@ available in C. In a target-dependent way, it copies the source
 intrinsic is necessary because the ``llvm.va_start`` intrinsic may be
 arbitrarily complex and require, for example, memory allocation.
 
+.. _int_safestack_vararg_save_regs:
+
+'``llvm.safestack.vararg.save.regs``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare void @llvm.safestack.vararg.save.regs(ptr <slot>)
+
+Overview:
+"""""""""
+
+The '``llvm.safestack.vararg.save.regs``' intrinsic spills the incoming
+variadic argument registers into the varargs register save area ``<slot>``.
+
+Arguments:
+""""""""""
+
+The argument is a pointer to the register save area. Its size and alignment are
+those reported by ``TargetLowering::getVarArgsSaveAreaInfo`` for the containing
+function.
+
+Semantics:
+""""""""""
+
+This intrinsic, together with :ref:`llvm.va_start.safestack
+<int_va_start_safestack>`, lets the :doc:`SafeStack <SafeStack>` pass place the
+varargs register save area on the unsafe stack rather than the safe stack.
+Normally the backend allocates that area itself, in the safe-stack frame, and a
+``va_list`` therefore holds a raw safe-stack address in attacker-reachable
+memory. Instead the pass reserves the slot in its own unsafe-frame layout and
+passes the address here, as an ordinary operand.
+
+The pass emits this intrinsic in the entry block, and the containing function
+must be variadic and carry the ``safestack`` attribute. The entry-block
+restriction is load-bearing: the spills consume physical argument registers,
+which are only live there. At most one call may appear per function.
+
+.. _int_va_start_safestack:
+
+'``llvm.va_start.safestack``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare void @llvm.va_start.safestack.p0(ptr <arglist>, ptr <slot>, ptr <base>)
+
+Overview:
+"""""""""
+
+The '``llvm.va_start.safestack``' intrinsic initializes ``<arglist>``, using the
+SafeStack-reserved register save area ``<slot>``.
+
+Arguments:
+""""""""""
+
+The first argument is a pointer to a ``va_list`` element to initialize, as for
+:ref:`llvm.va_start <int_va_start>`; the intrinsic is likewise overloaded on its
+address space. The second argument is the register save area, the same value
+passed to :ref:`llvm.safestack.vararg.save.regs
+<int_safestack_vararg_save_regs>`. The third argument is the function's
+entry-time unsafe stack pointer.
+
+Semantics:
+""""""""""
+
+Behaves as :ref:`llvm.va_start <int_va_start>`, except that the resulting
+``va_list``'s register save area is ``<slot>`` rather than a backend-allocated
+safe-stack object. The layout of ``va_list`` itself is unchanged, so
+``va_arg`` and uninstrumented consumers such as ``vsnprintf`` keep working.
+
+``<base>`` is used as the overflow argument area by targets that enable the
+varargs position convention, under which an instrumented caller places variadic
+stack arguments on the unsafe stack. Targets that have not enabled it ignore
+``<base>`` and keep taking the overflow area from the caller's frame.
+
+The containing function must be variadic and carry the ``safestack`` attribute.
+
 Accurate Garbage Collection Intrinsics
 --------------------------------------
 

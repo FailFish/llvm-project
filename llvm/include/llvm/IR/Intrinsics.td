@@ -815,6 +815,27 @@ def int_vacopy  : DefaultAttrsIntrinsic<[],
 def int_vaend   : DefaultAttrsIntrinsic<[],
                                         [llvm_anyptr_ty], [], "llvm.va_end">;
 
+// SafeStack variants of the variadic-argument handling intrinsics. The
+// SafeStack pass emits these in place of llvm.va_start when the target opts in
+// via TargetLowering::getVarArgsSaveAreaInfo, so that the varargs register save
+// area lives on the unsafe stack instead of the safe stack.
+//
+// llvm.safestack.vararg.save.regs spills the incoming variadic argument
+// registers into the pass-reserved save area %slot. It must appear in the entry
+// block, at most once per function: the spills consume physical registers,
+// which are only live there.
+def int_safestack_vararg_save_regs
+    : DefaultAttrsIntrinsic<[], [llvm_ptr_ty], [],
+                            "llvm.safestack.vararg.save.regs">;
+
+// llvm.va_start.safestack initializes the va_list %ap, using %slot as the
+// reg_save_area. %base is the function's entry-time unsafe stack pointer, used
+// as the overflow_arg_area under the varargs position convention; it is ignored
+// by targets that have not enabled that convention.
+def int_vastart_safestack
+    : DefaultAttrsIntrinsic<[], [llvm_anyptr_ty, llvm_ptr_ty, llvm_ptr_ty], [],
+                            "llvm.va_start.safestack">;
+
 //===------------------- Garbage Collection Intrinsics --------------------===//
 //
 def int_gcroot  : Intrinsic<[],

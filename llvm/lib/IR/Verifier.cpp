@@ -350,6 +350,10 @@ class Verifier : public InstVisitor<Verifier>, VerifierSupport {
   /// already.
   bool SawFrameEscape;
 
+  /// Whether we've seen a call to @llvm.safestack.vararg.save.regs in this
+  /// function already.
+  bool SawVarArgSaveRegs = false;
+
   /// Whether the current function has a DISubprogram attached to it.
   bool HasDebugInfo = false;
 
@@ -447,6 +451,7 @@ public:
     DebugFnArgs.clear();
     LandingPadResultTy = nullptr;
     SawFrameEscape = false;
+    SawVarArgSaveRegs = false;
     SiblingFuncletInfo.clear();
     verifyNoAliasScopeDecl();
     NoAliasScopeDecls.clear();
@@ -6561,6 +6566,33 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
   case Intrinsic::vastart: {
     Check(Call.getFunction()->isVarArg(),
           "va_start called in a non-varargs function");
+    break;
+  }
+  case Intrinsic::vastart_safestack: {
+    const Function *F = Call.getFunction();
+    Check(F->isVarArg(),
+          "va_start.safestack called in a non-varargs function", Call);
+    Check(F->hasFnAttribute(Attribute::SafeStack),
+          "va_start.safestack called in a function without the safestack "
+          "attribute",
+          Call);
+    break;
+  }
+  case Intrinsic::safestack_vararg_save_regs: {
+    const Function *F = Call.getFunction();
+    Check(F->isVarArg(),
+          "safestack.vararg.save.regs called in a non-varargs function", Call);
+    Check(F->hasFnAttribute(Attribute::SafeStack),
+          "safestack.vararg.save.regs called in a function without the "
+          "safestack attribute",
+          Call);
+    // The spills consume physical argument registers, which are only live in
+    // the entry block.
+    Check(Call.getParent()->isEntryBlock(),
+          "safestack.vararg.save.regs used outside of entry block", Call);
+    Check(!SawVarArgSaveRegs,
+          "multiple calls to safestack.vararg.save.regs in one function", Call);
+    SawVarArgSaveRegs = true;
     break;
   }
   case Intrinsic::get_dynamic_area_offset: {

@@ -117,6 +117,15 @@ class SafeStack {
 
   Value *UnsafeStackPtr = nullptr;
 
+  /// Every llvm.va_start in the function, and the size/alignment of the
+  /// varargs register save area the target wants relocated onto the unsafe
+  /// stack. Set only when the target opts in via getVarArgsSaveAreaInfo.
+  SmallVector<IntrinsicInst *, 2> VAStarts;
+  std::optional<TargetLoweringBase::VarArgsSaveAreaInfo> VarArgsSaveArea;
+
+  /// Address of the reserved save area, once the frame is laid out.
+  Value *VarArgsSlot = nullptr;
+
   /// Unsafe stack alignment. Each stack frame must ensure that the stack is
   /// aligned to this value. We need to re-align the unsafe stack if the
   /// alignment of any object on the stack exceeds this value.
@@ -406,6 +415,11 @@ void SafeStack::findInsts(Function &F,
       // setjmps require stack restore.
       if (CI->getCalledFunction() && CI->canReturnTwice())
         StackRestorePoints.push_back(CI);
+      // Key off the intrinsic, not the va_list alloca: llvm.va_start may
+      // target heap or global memory, in which case there is no alloca.
+      if (auto *II = dyn_cast<IntrinsicInst>(CI))
+        if (II->getIntrinsicID() == Intrinsic::vastart)
+          VAStarts.push_back(II);
     } else if (auto LP = dyn_cast<LandingPadInst>(&I)) {
       // Exception landing pads require stack restore.
       StackRestorePoints.push_back(LP);
@@ -501,7 +515,7 @@ Value *SafeStack::moveStaticAllocasToUnsafeStack(
     IRBuilder<> &IRB, Function &F, ArrayRef<AllocaInst *> StaticAllocas,
     ArrayRef<Argument *> ByValArguments, Instruction *BasePointer,
     AllocaInst *StackGuardSlot) {
-  if (StaticAllocas.empty() && ByValArguments.empty())
+  if (StaticAllocas.empty() && ByValArguments.empty() && !VarArgsSaveArea)
     return BasePointer;
 
   DIBuilder DIB(*F.getParent());
@@ -525,6 +539,14 @@ Value *SafeStack::moveStaticAllocasToUnsafeStack(
     SSL.addObject(StackGuardSlot, getStaticAllocaAllocationSize(StackGuardSlot),
                   StackGuardSlot->getAlign(), SSC.getFullLiveRange());
   }
+
+  // The varargs register save area is an ordinary static frame object, so it
+  // sits above StaticTop and the restore points, dynamic allocas and stack
+  // coloring all keep working unchanged. The layout handle is opaque, so the
+  // function itself serves as a key that can never collide with an alloca.
+  if (VarArgsSaveArea)
+    SSL.addObject(&F, VarArgsSaveArea->Size, VarArgsSaveArea->Alignment,
+                  SSC.getFullLiveRange());
 
   for (Argument *Arg : ByValArguments) {
     Type *Ty = Arg->getParamByValType();
@@ -562,6 +584,13 @@ Value *SafeStack::moveStaticAllocasToUnsafeStack(
   }
 
   IRB.SetInsertPoint(BasePointer->getNextNode());
+
+  if (VarArgsSaveArea) {
+    unsigned Offset = SSL.getObjectOffset(&F);
+    VarArgsSlot = IRB.CreatePtrAdd(BasePointer,
+                                   ConstantInt::get(Int32Ty, -Offset),
+                                   "varargs_reg_save_area");
+  }
 
   if (StackGuardSlot) {
     unsigned Offset = SSL.getObjectOffset(StackGuardSlot);
@@ -776,12 +805,20 @@ bool SafeStack::run() {
   findInsts(F, StaticAllocas, DynamicAllocas, ByValArguments, Returns,
             StackRestorePoints);
 
+  // If the target can host the varargs register save area on the unsafe
+  // stack, reserving it is what makes the frame exist: a function whose only
+  // unsafe object is the save area (a heap or global va_list, say) still gets
+  // the full prologue/epilogue and restore-point machinery via the normal
+  // path, with no special case anywhere.
+  if (!VAStarts.empty())
+    VarArgsSaveArea = TL.getVarArgsSaveAreaInfo(F);
+
   if (StaticAllocas.empty() && DynamicAllocas.empty() &&
-      ByValArguments.empty() && StackRestorePoints.empty())
+      ByValArguments.empty() && StackRestorePoints.empty() && !VarArgsSaveArea)
     return false; // Nothing to do in this function.
 
   if (!StaticAllocas.empty() || !DynamicAllocas.empty() ||
-      !ByValArguments.empty())
+      !ByValArguments.empty() || VarArgsSaveArea)
     ++NumUnsafeStackFunctions; // This function has the unsafe stack.
 
   if (!StackRestorePoints.empty())
@@ -837,6 +874,25 @@ bool SafeStack::run() {
   // allocated.
   Value *StaticTop = moveStaticAllocasToUnsafeStack(
       IRB, F, StaticAllocas, ByValArguments, BasePointer, StackGuardSlot);
+
+  // Hand the reserved save area to instruction selection. save.regs must stay
+  // in the entry block, where the argument registers it spills are still
+  // live; the va_start variants may sit anywhere.
+  if (VarArgsSlot) {
+    assert(isa<Instruction>(VarArgsSlot) &&
+           "save area address should be computed in the entry block");
+    IRB.SetInsertPoint(cast<Instruction>(VarArgsSlot)->getNextNode());
+    IRB.CreateIntrinsic(Intrinsic::safestack_vararg_save_regs, {},
+                        {VarArgsSlot});
+
+    for (IntrinsicInst *VAStart : VAStarts) {
+      Value *ArgList = VAStart->getArgOperand(0);
+      IRBuilder<> IRBVA(VAStart);
+      IRBVA.CreateIntrinsic(Intrinsic::vastart_safestack, {ArgList->getType()},
+                            {ArgList, VarArgsSlot, BasePointer});
+      VAStart->eraseFromParent();
+    }
+  }
 
   // Safe stack object that stores the current unsafe stack top. It is updated
   // as unsafe dynamic (non-constant-sized) allocas are allocated and freed.

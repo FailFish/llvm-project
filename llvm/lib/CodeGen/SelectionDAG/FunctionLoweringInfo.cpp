@@ -201,9 +201,12 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
         if (const auto *II = dyn_cast<IntrinsicInst>(&I)) {
           switch (II->getIntrinsicID()) {
           case Intrinsic::vastart:
+          case Intrinsic::vastart_safestack:
             // Look for calls to the @llvm.va_start intrinsic. We can omit
             // some prologue boilerplate for variadic functions that don't
-            // examine their arguments.
+            // examine their arguments. The SafeStack variant counts too:
+            // targets still need the overflow area frame index and the gp/fp
+            // offsets, only the register save area moves.
             MF->getFrameInfo().setHasVAStart(true);
             break;
           case Intrinsic::fake_use:

@@ -647,6 +647,11 @@ namespace llvm {
     Value *getSafeStackPointerLocation(
         IRBuilderBase &IRB, const LibcallLoweringInfo &Libcalls) const override;
 
+    /// Report the varargs register save area dimensions so that the SafeStack
+    /// pass can reserve it on the unsafe stack. SysV x86-64 only.
+    std::optional<VarArgsSaveAreaInfo>
+    getVarArgsSaveAreaInfo(const Function &F) const override;
+
     std::pair<SDValue, SDValue> BuildFILD(EVT DstVT, EVT SrcVT, const SDLoc &DL,
                                           SDValue Chain, SDValue Pointer,
                                           MachinePointerInfo PtrInfo,
@@ -813,6 +818,8 @@ namespace llvm {
     SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerVASTARTSafeStack(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerSafeStackVarArgSaveRegs(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVAARG(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerADDROFRETURNADDR(SDValue Op, SelectionDAG &DAG) const;

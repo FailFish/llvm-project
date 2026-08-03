@@ -665,6 +665,23 @@ Value *X86TargetLowering::getSafeStackPointerLocation(
   return TargetLowering::getSafeStackPointerLocation(IRB, Libcalls);
 }
 
+std::optional<X86TargetLowering::VarArgsSaveAreaInfo>
+X86TargetLowering::getVarArgsSaveAreaInfo(const Function &F) const {
+  // The save area only exists on SysV x86-64. Win64 passes varargs entirely
+  // through the caller-allocated home area, and i386 has no register save
+  // area at all, so neither has anything to relocate.
+  if (!Subtarget.is64Bit() || Subtarget.isCallingConvWin64(F.getCallingConv()))
+    return std::nullopt;
+
+  // Matches the object created by createVarArgAreaAndStoreRegisters:
+  // 6 GPRs plus, when SSE is available, 8 XMMs. The 16-byte alignment is
+  // required by the movaps used to spill the XMMs.
+  uint64_t Size = 6 * 8;
+  if (Subtarget.hasSSE1())
+    Size += 8 * 16;
+  return VarArgsSaveAreaInfo{Size, Align(16)};
+}
+
 //===----------------------------------------------------------------------===//
 //               Return Value Calling Convention Implementation
 //===----------------------------------------------------------------------===//
@@ -1545,8 +1562,29 @@ void VarArgsLoweringHelper::createVarArgAreaAndStoreRegisters(
       // they may be loaded by dereferencing the result of va_next.
       FuncInfo->setVarArgsGPOffset(NumIntRegs * 8);
       FuncInfo->setVarArgsFPOffset(ArgGPRs.size() * 8 + NumXMMRegs * 16);
-      FuncInfo->setRegSaveFrameIndex(FrameInfo.CreateStackObject(
-          ArgGPRs.size() * 8 + ArgXMMs.size() * 16, Align(16), false));
+      // Under the SafeStack handshake the save area is not a frame object: the
+      // SafeStack pass reserved it in the unsafe frame and passes its address
+      // as an operand of llvm.safestack.vararg.save.regs.
+      if (!FuncInfo->hasSafeStackVarArgHandshake())
+        FuncInfo->setRegSaveFrameIndex(FrameInfo.CreateStackObject(
+            ArgGPRs.size() * 8 + ArgXMMs.size() * 16, Align(16), false));
+    }
+
+    // The handshake still needs the argument registers captured here, while
+    // they are live at entry, but the stores themselves are emitted when the
+    // save.regs intrinsic is visited. Record what to spill and stop.
+    if (FuncInfo->hasSafeStackVarArgHandshake()) {
+      assert(!isWin64() && "SafeStack varargs handshake is SysV-only");
+      FuncInfo->setVarArgsNumIntRegs(NumIntRegs);
+      FuncInfo->setVarArgsNumXMMRegs(NumXMMRegs);
+      for (MCPhysReg Reg : ArgGPRs.slice(NumIntRegs))
+        TheMachineFunction.addLiveIn(Reg, &X86::GR64RegClass);
+      if (!ArgXMMs.slice(NumXMMRegs).empty()) {
+        TheMachineFunction.addLiveIn(X86::AL, &X86::GR8RegClass);
+        for (MCPhysReg Reg : ArgXMMs.slice(NumXMMRegs))
+          TheMachineFunction.getRegInfo().addLiveIn(Reg);
+      }
+      return;
     }
 
     SmallVector<SDValue, 6>
@@ -1618,6 +1656,120 @@ void VarArgsLoweringHelper::createVarArgAreaAndStoreRegisters(
   }
 }
 
+/// Lower llvm.safestack.vararg.save.regs: spill the unallocated argument
+/// registers into the SafeStack-reserved save area given by the %slot operand.
+///
+/// This is the half of createVarArgAreaAndStoreRegisters that was suppressed
+/// there. It runs here, rather than in LowerFormalArguments, only because the
+/// slot address is an IR value that is not available that early; the verifier
+/// pins the intrinsic to the entry block, which is selected first, so the
+/// physical argument registers are still live.
+SDValue X86TargetLowering::LowerSafeStackVarArgSaveRegs(SDValue Op,
+                                                        SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  X86MachineFunctionInfo *FuncInfo = MF.getInfo<X86MachineFunctionInfo>();
+  CallingConv::ID CallConv = MF.getFunction().getCallingConv();
+  SDLoc DL(Op);
+
+  SDValue Chain = Op.getOperand(0);
+  SDValue Slot = Op.getOperand(2);
+  EVT PtrVT = getPointerTy(DAG.getDataLayout());
+
+  ArrayRef<MCPhysReg> ArgGPRs = get64BitArgumentGPRs(CallConv, Subtarget);
+  ArrayRef<MCPhysReg> ArgXMMs = get64BitArgumentXMMs(MF, CallConv, Subtarget);
+  unsigned NumIntRegs = FuncInfo->getVarArgsNumIntRegs();
+  unsigned NumXMMRegs = FuncInfo->getVarArgsNumXMMRegs();
+
+  // The save area is no longer a frame object, so none of these stores can
+  // claim MachinePointerInfo::getFixedStack.
+  SmallVector<SDValue, 8> MemOps;
+  unsigned Offset = FuncInfo->getVarArgsGPOffset();
+  for (MCPhysReg Reg : ArgGPRs.slice(NumIntRegs)) {
+    Register GPR = MF.addLiveIn(Reg, &X86::GR64RegClass);
+    SDValue Val = DAG.getCopyFromReg(Chain, DL, GPR, MVT::i64);
+    SDValue FIN = DAG.getNode(ISD::ADD, DL, PtrVT, Slot,
+                              DAG.getIntPtrConstant(Offset, DL));
+    MemOps.push_back(
+        DAG.getStore(Val.getValue(1), DL, Val, FIN, MachinePointerInfo()));
+    Offset += 8;
+  }
+
+  const auto &AvailableXmms = ArgXMMs.slice(NumXMMRegs);
+  if (!AvailableXmms.empty()) {
+    Register AL = MF.addLiveIn(X86::AL, &X86::GR8RegClass);
+    SDValue ALVal = DAG.getCopyFromReg(Chain, DL, AL, MVT::i8);
+
+    SmallVector<SDValue, 12> SaveXMMOps = {Chain, ALVal, Slot,
+                                           DAG.getTargetConstant(
+                                               FuncInfo->getVarArgsFPOffset(),
+                                               DL, MVT::i32)};
+    // As in createVarArgAreaAndStoreRegisters, pass the XMMs as physical
+    // registers so FastRegAlloc does not spill them across the %al check.
+    for (MCPhysReg Reg : AvailableXmms) {
+      MF.getRegInfo().addLiveIn(Reg);
+      SaveXMMOps.push_back(DAG.getRegister(Reg, MVT::v4f32));
+    }
+    MachineMemOperand *StoreMMO = MF.getMachineMemOperand(
+        MachinePointerInfo(), MachineMemOperand::MOStore, 128, Align(16));
+    MemOps.push_back(DAG.getMemIntrinsicNode(X86ISD::VASTART_SAVE_XMM_REGS, DL,
+                                             DAG.getVTList(MVT::Other),
+                                             SaveXMMOps, MVT::i8, StoreMMO));
+  }
+
+  if (MemOps.empty())
+    return Chain;
+  return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, MemOps);
+}
+
+/// Lower llvm.va_start.safestack: as LowerVASTART, except that reg_save_area
+/// is the %slot operand rather than a backend-allocated frame object. The
+/// va_list layout is unchanged, so va_arg and uninstrumented consumers are
+/// unaffected.
+SDValue X86TargetLowering::LowerVASTARTSafeStack(SDValue Op,
+                                                 SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  X86MachineFunctionInfo *FuncInfo = MF.getInfo<X86MachineFunctionInfo>();
+  SDLoc DL(Op);
+
+  // Operands: chain, intrinsic id, %ap, %slot, %base. %base is the entry-time
+  // unsafe stack pointer, used as the overflow area only under the varargs
+  // position convention, which Phase 1 does not enable.
+  SDValue Chain = Op.getOperand(0);
+  SDValue Ptr = Op.getOperand(2);
+  SDValue Slot = Op.getOperand(3);
+  EVT PtrVT = Ptr.getValueType();
+
+  assert(Subtarget.is64Bit() &&
+         !Subtarget.isCallingConvWin64(MF.getFunction().getCallingConv()) &&
+         "va_start.safestack is SysV x86-64 only");
+
+  // __va_list_tag:
+  //   gp_offset, fp_offset, overflow_arg_area, reg_save_area
+  SmallVector<SDValue, 8> MemOps;
+  SDValue FIN = Ptr;
+  MemOps.push_back(DAG.getStore(
+      Chain, DL, DAG.getConstant(FuncInfo->getVarArgsGPOffset(), DL, MVT::i32),
+      FIN, MachinePointerInfo()));
+
+  FIN = DAG.getMemBasePlusOffset(FIN, TypeSize::getFixed(4), DL);
+  MemOps.push_back(DAG.getStore(
+      Chain, DL, DAG.getConstant(FuncInfo->getVarArgsFPOffset(), DL, MVT::i32),
+      FIN, MachinePointerInfo()));
+
+  // overflow_arg_area still points into the caller's frame in Phase 1.
+  FIN = DAG.getNode(ISD::ADD, DL, PtrVT, FIN, DAG.getIntPtrConstant(4, DL));
+  SDValue OVFIN = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(), PtrVT);
+  MemOps.push_back(DAG.getStore(Chain, DL, OVFIN, FIN, MachinePointerInfo()));
+
+  // reg_save_area is the SafeStack slot.
+  FIN = DAG.getNode(
+      ISD::ADD, DL, PtrVT, FIN,
+      DAG.getIntPtrConstant(Subtarget.isTarget64BitLP64() ? 8 : 4, DL));
+  MemOps.push_back(DAG.getStore(Chain, DL, Slot, FIN, MachinePointerInfo()));
+
+  return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, MemOps);
+}
+
 void VarArgsLoweringHelper::forwardMustTailParameters(SDValue &Chain) {
   // Find the largest legal vector type.
   MVT VecVT = MVT::Other;
@@ -1665,6 +1817,15 @@ void VarArgsLoweringHelper::lowerVarArgsParameters(SDValue &Chain,
   // If necessary, it would be set into the correct value later.
   FuncInfo->setVarArgsFrameIndex(0xAAAAAAA);
   FuncInfo->setRegSaveFrameIndex(0xAAAAAAA);
+
+  // The SafeStack pass pins llvm.safestack.vararg.save.regs to the entry block
+  // and emits at most one per function, so this scan is both cheap and exact.
+  FuncInfo->setSafeStackVarArgHandshake(any_of(
+      TheFunction.getEntryBlock(), [](const Instruction &I) {
+        const auto *II = dyn_cast<IntrinsicInst>(&I);
+        return II &&
+               II->getIntrinsicID() == Intrinsic::safestack_vararg_save_regs;
+      }));
 
   if (FrameInfo.hasVAStart())
     createVarArgAreaAndStoreRegisters(Chain, StackSize);

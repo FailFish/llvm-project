@@ -34246,6 +34246,17 @@ SDValue X86TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::VACOPY:             return LowerVACOPY(Op, Subtarget, DAG);
   case ISD::INTRINSIC_WO_CHAIN: return LowerINTRINSIC_WO_CHAIN(Op, DAG);
   case ISD::INTRINSIC_VOID:
+    // The SafeStack varargs handshake is lowered next to the rest of the
+    // varargs code, which owns the argument-register tables.
+    switch (Op.getConstantOperandVal(1)) {
+    case Intrinsic::safestack_vararg_save_regs:
+      return LowerSafeStackVarArgSaveRegs(Op, DAG);
+    case Intrinsic::vastart_safestack:
+      return LowerVASTARTSafeStack(Op, DAG);
+    default:
+      break;
+    }
+    [[fallthrough]];
   case ISD::INTRINSIC_W_CHAIN:  return LowerINTRINSIC_W_CHAIN(Op, Subtarget, DAG);
   case ISD::RETURNADDR:         return LowerRETURNADDR(Op, DAG);
   case ISD::ADDROFRETURNADDR:   return LowerADDROFRETURNADDR(Op, DAG);

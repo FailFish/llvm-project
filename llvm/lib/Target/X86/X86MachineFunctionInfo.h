@@ -111,6 +111,17 @@ class X86MachineFunctionInfo : public MachineFunctionInfo {
   unsigned VarArgsGPOffset = 0;
   /// VarArgsFPOffset - X86-64 vararg func fp reg offset.
   unsigned VarArgsFPOffset = 0;
+  /// SafeStackVarArgHandshake - True when the SafeStack pass moved the varargs
+  /// register save area onto the unsafe stack, handing us its address through
+  /// llvm.safestack.vararg.save.regs / llvm.va_start.safestack. The save area
+  /// is then not a frame object at all, so RegSaveFrameIndex is unused and the
+  /// argument register spills are emitted when the save.regs intrinsic is
+  /// visited rather than in LowerFormalArguments.
+  bool SafeStackVarArgHandshake = false;
+  /// Number of unallocated argument GPRs / XMMs at entry, recorded by
+  /// LowerFormalArguments so that the deferred spills know what to store.
+  unsigned VarArgsNumIntRegs = 0;
+  unsigned VarArgsNumXMMRegs = 0;
   /// ArgumentStackSize - The number of bytes on stack consumed by the arguments
   /// being passed on the stack.
   unsigned ArgumentStackSize = 0;
@@ -245,6 +256,15 @@ public:
 
   unsigned getVarArgsFPOffset() const { return VarArgsFPOffset; }
   void setVarArgsFPOffset(unsigned Offset) { VarArgsFPOffset = Offset; }
+
+  bool hasSafeStackVarArgHandshake() const { return SafeStackVarArgHandshake; }
+  void setSafeStackVarArgHandshake(bool V) { SafeStackVarArgHandshake = V; }
+
+  unsigned getVarArgsNumIntRegs() const { return VarArgsNumIntRegs; }
+  void setVarArgsNumIntRegs(unsigned N) { VarArgsNumIntRegs = N; }
+
+  unsigned getVarArgsNumXMMRegs() const { return VarArgsNumXMMRegs; }
+  void setVarArgsNumXMMRegs(unsigned N) { VarArgsNumXMMRegs = N; }
 
   unsigned getArgumentStackSize() const { return ArgumentStackSize; }
   void setArgumentStackSize(unsigned size) { ArgumentStackSize = size; }

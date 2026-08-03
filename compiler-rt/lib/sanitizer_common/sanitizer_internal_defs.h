@@ -107,9 +107,15 @@
 // lock held. It will lead to dead lock if unresolved PLT functions (which helds
 // rtld_bind_lock reader lock) are called inside .preinit_array functions.
 //
+// musl does not run .preinit_array at all, so a runtime that registers its
+// initializer there is silently never initialized. Fall back to the
+// constructor attribute instead.
+//
 // FIXME: do we have anything like this on Mac?
 #ifndef SANITIZER_CAN_USE_PREINIT_ARRAY
-#if (SANITIZER_LINUX || SANITIZER_FUCHSIA || SANITIZER_NETBSD) && !defined(PIC)
+#if ((SANITIZER_LINUX && !SANITIZER_MUSL) || SANITIZER_FUCHSIA ||              \
+     SANITIZER_NETBSD) &&                                                     \
+    !defined(PIC)
 #define SANITIZER_CAN_USE_PREINIT_ARRAY 1
 // Before Solaris 11.4, .preinit_array is fully supported only with GNU ld.
 // FIXME: Check for those conditions.

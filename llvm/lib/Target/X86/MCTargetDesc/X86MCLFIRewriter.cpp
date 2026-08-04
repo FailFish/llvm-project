@@ -637,7 +637,7 @@ bool X86::X86MCLFIRewriter::emitSandboxMemOps(MCInst &Inst,
 
   bool BundleLockOpened = false;
 
-  for (int I = 0, E = Inst.getNumOperands(); I < E; ++I) {
+  for (int I = 0, E = Desc.getNumOperands(); I < E; ++I) {
     if (OpInfo[I].OperandType != MCOI::OPERAND_MEMORY)
       continue;
 
@@ -934,8 +934,9 @@ static void demoteInst(MCInst &Inst, const MCInstrInfo &InstInfo) {
   Inst.setOpcode(demoteOpcode(Inst.getOpcode()));
 
   // Demote any 64-bit GPR operands to their 32-bit counterparts.
-  const ArrayRef<MCOperandInfo> OpInfo = InstInfo.get(Inst.getOpcode()).operands();
-  for (unsigned I = 0, E = Inst.getNumOperands(); I < E; ++I) {
+  const MCInstrDesc &Desc = InstInfo.get(Inst.getOpcode());
+  const ArrayRef<MCOperandInfo> OpInfo = Desc.operands();
+  for (unsigned I = 0, E = Desc.getNumOperands(); I < E; ++I) {
     if (OpInfo[I].OperandType != MCOI::OPERAND_REGISTER)
       continue;
     MCRegister Reg = Inst.getOperand(I).getReg();

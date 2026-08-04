@@ -18,6 +18,7 @@
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCELFStreamer.h"
+#include "llvm/MC/MCLFI.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrInfo.h"
@@ -555,10 +556,17 @@ void ObjectRewriteInstance::emitObjectFile(StringRef OutputFilename) {
       *BC->TheTriple, *BC->Ctx, std::move(TAB), std::move(OW), std::move(CE),
       *BC->STI));
 
+  Streamer->initSections(*BC->STI);
+
+  if (BC->TheTriple->isLFI()) {
+    if (!Streamer->getLFIRewriter())
+      initializeLFIMCStreamer(*Streamer, *BC->Ctx, *BC->TheTriple);
+    emitLFIBundleAlign(*Streamer, *BC->Ctx);
+    emitLFINoteSection(*Streamer, *BC->Ctx);
+  }
+
   if (!HasAnyCFI)
     Streamer->emitCFISections(/*EH=*/false, /*Debug=*/false, /*SFrame=*/false);
-
-  Streamer->initSections(*BC->STI);
 
   ObjectEmitter OE(*this, *BC, *Streamer);
   OE.emitObjectFile();

@@ -68,6 +68,15 @@ static cl::opt<SpareStrategyMode> SpareStrategyOpt(
                    "Evict argument reg to callee-saved reg")),
     cl::cat(BoltCategory));
 
+static cl::opt<bool> EnableLFIRewriter("lfi-rewrite",
+                                        cl::desc("Enable LFI target triple emission mode"),
+                                        cl::init(false),
+                                        cl::cat(BoltCategory));
+
+static cl::opt<std::string>
+    TargetTripleOpt("target-triple", cl::desc("Override target triple"),
+                    cl::cat(BoltCategory));
+
 static cl::opt<bool> PrintDiff("print-diff",
                                cl::desc("Print disassembly diff"),
                                cl::cat(BoltCategory));
@@ -112,7 +121,14 @@ int main(int argc, char **argv) {
          << " (" << ObjFile->getArch() << ")\n";
 
   Triple TheTriple = ObjFile->makeTriple();
-
+  if (!opts::TargetTripleOpt.empty()) {
+    TheTriple = Triple(opts::TargetTripleOpt);
+  } else if (opts::EnableLFIRewriter) {
+    if (TheTriple.getArch() == Triple::x86_64)
+      TheTriple = Triple("x86_64_lfi-unknown-linux-gnu");
+    else if (TheTriple.getArch() == Triple::aarch64)
+      TheTriple = Triple("aarch64_lfi-unknown-linux-gnu");
+  }
   Relocation::Arch = TheTriple.getArch();
   auto BCOrErr = BinaryContext::createBinaryContext(
       TheTriple, std::make_shared<orc::SymbolStringPool>(), opts::InputFilename,

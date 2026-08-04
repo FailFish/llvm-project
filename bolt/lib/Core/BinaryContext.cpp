@@ -215,7 +215,7 @@ Expected<std::unique_ptr<BinaryContext>> BinaryContext::createBinaryContext(
 
   std::string Error;
   const Target *TheTarget =
-      TargetRegistry::lookupTarget(ArchName, TheTriple, Error);
+      TargetRegistry::lookupTarget(TheTriple.isLFI() ? "" : ArchName, TheTriple, Error);
   if (!TheTarget)
     return createStringError(make_error_code(std::errc::not_supported),
                              Twine("BOLT-ERROR: ", Error));

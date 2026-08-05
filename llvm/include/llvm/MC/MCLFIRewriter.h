@@ -20,6 +20,10 @@
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
+enum MCInstLFIFlags {
+  IP_SKIP_REWRITE = 1 << 30
+};
+
 class MCContext;
 class MCInst;
 class MCSubtargetInfo;

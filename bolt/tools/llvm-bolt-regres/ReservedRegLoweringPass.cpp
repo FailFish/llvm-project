@@ -17,6 +17,7 @@
 #include "bolt/Core/BinaryContext.h"
 #include "bolt/Core/MCPlus.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCLFIRewriter.h"
 
 namespace llvm {
 namespace bolt {
@@ -186,24 +187,30 @@ void ReservedRegLoweringPass::lowerTargetRegisterInsts() {
 
         SmallVector<MCInst, 5> LoweredSequence;
 
+        auto addSafeInst = [&](MCInst InstToWrap) {
+          if (BC.TheTriple->isLFI())
+            InstToWrap.setFlags(InstToWrap.getFlags() | IP_SKIP_REWRITE);
+          LoweredSequence.push_back(InstToWrap);
+        };
+
         // 1. Save live scratch GPR if dead scratch was unavailable
         if (NeedOuterSpill)
-          LoweredSequence.push_back(createSpillInst(ScratchReg, TempScratchStorage));
+          addSafeInst(createSpillInst(ScratchReg, TempScratchStorage));
 
         // 2. Load virtual register value from TLS memory backing if instruction reads target register
         if (IsUse)
-          LoweredSequence.push_back(createRestoreInst(ScratchReg, Storage));
+          addSafeInst(createRestoreInst(ScratchReg, Storage));
 
         // 3. Original instruction (now operating on ScratchReg)
         LoweredSequence.push_back(Inst);
 
         // 4. Store updated virtual register value back to TLS memory backing if instruction defines target register
         if (IsDef)
-          LoweredSequence.push_back(createSpillInst(ScratchReg, Storage));
+          addSafeInst(createSpillInst(ScratchReg, Storage));
 
         // 5. Restore live scratch GPR if saved
         if (NeedOuterSpill)
-          LoweredSequence.push_back(createRestoreInst(ScratchReg, TempScratchStorage));
+          addSafeInst(createRestoreInst(ScratchReg, TempScratchStorage));
 
         auto ReplacePos = BB.begin() + i;
         BB.replaceInstruction(ReplacePos, LoweredSequence.begin(), LoweredSequence.end());

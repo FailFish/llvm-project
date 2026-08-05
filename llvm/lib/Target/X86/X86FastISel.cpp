@@ -3243,6 +3243,15 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   if (Subtarget->useIndirectThunkCalls())
     return false;
 
+  // Under the SafeStack varargs position convention a variadic call's stack
+  // arguments are staged on the unsafe stack rather than written to the native
+  // outgoing area. Only X86TargetLowering::LowerCall does that, so hand these
+  // calls to SelectionDAG.
+  if (IsVarArg && Is64Bit && !IsWin64 &&
+      FuncInfo.Fn->hasFnAttribute(Attribute::SafeStack) &&
+      TLI.useSafeStackVarArgPositionConvention(*FuncInfo.Fn))
+    return false;
+
   // Handle only C and fastcc calling conventions for now.
   switch (CC) {
   default: return false;

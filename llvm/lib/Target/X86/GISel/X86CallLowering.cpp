@@ -331,6 +331,14 @@ bool X86CallLowering::lowerCall(MachineIRBuilder &MIRBuilder,
                                 Info.CallConv == CallingConv::X86_64_SysV))
     return false;
 
+  // Under the SafeStack varargs position convention a variadic call's stack
+  // arguments are staged on the unsafe stack rather than written to the native
+  // outgoing area. Only X86TargetLowering::LowerCall does that, so fall back
+  // to SelectionDAG for these calls.
+  if (Info.IsVarArg && F.hasFnAttribute(Attribute::SafeStack) &&
+      STI.getTargetLowering()->useSafeStackVarArgPositionConvention(F))
+    return false;
+
   unsigned AdjStackDown = TII.getCallFrameSetupOpcode();
   auto CallSeqStart = MIRBuilder.buildInstr(AdjStackDown);
 

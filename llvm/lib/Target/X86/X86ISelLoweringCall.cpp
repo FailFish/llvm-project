@@ -2106,6 +2106,41 @@ SDValue X86TargetLowering::LowerFormalArguments(
   return Chain;
 }
 
+/// Assign one call operand a location, the way CCState::AnalyzeCallOperands
+/// would. Split out so that the SafeStack varargs position convention can pad
+/// the outgoing stack area between the fixed and the variadic arguments.
+static void assignCallOperand(CCState &CCInfo, const ISD::OutputArg &Out,
+                              unsigned ArgNo) {
+  if (CC_X86(ArgNo, Out.VT, Out.VT, CCValAssign::Full, Out.Flags, Out.OrigTy,
+             CCInfo))
+    report_fatal_error("call operand has an unhandled type");
+}
+
+/// The address of the cell holding the current thread's unsafe stack pointer.
+///
+/// The SafeStack pass creates this global for every function it instruments
+/// (TargetLoweringBase::getDefaultSafeStackPointerLocation), and it treats a
+/// function containing a variadic call as one it must process precisely so
+/// that the global exists by the time this runs. Instruction selection cannot
+/// create it -- the module is const here -- so that coupling is load-bearing.
+static SDValue getUnsafeStackPtrHome(SelectionDAG &DAG, const SDLoc &dl,
+                                     MVT PtrVT) {
+  RTLIB::LibcallImpl Impl =
+      DAG.getLibcalls().getLibcallImpl(RTLIB::SAFESTACK_UNSAFE_STACK_PTR);
+  const GlobalValue *GV = nullptr;
+  if (Impl != RTLIB::Unsupported)
+    GV = DAG.getMachineFunction().getFunction().getParent()->getNamedValue(
+        RTLIB::RuntimeLibcallsInfo::getLibcallImplName(Impl));
+  // Targets that keep the unsafe stack pointer somewhere unaddressable from
+  // here -- a fixed TLS slot on Android and Fuchsia, a libcall elsewhere --
+  // land here. The convention is off by default, so this is reachable only by
+  // asking for it explicitly on such a target.
+  if (!isa_and_nonnull<GlobalVariable>(GV))
+    report_fatal_error("the SafeStack varargs position convention requires the "
+                       "unsafe stack pointer to live in a global variable");
+  return DAG.getGlobalAddress(GV, dl, PtrVT);
+}
+
 SDValue X86TargetLowering::LowerMemOpCallTo(SDValue Chain, SDValue StackPtr,
                                             SDValue Arg, const SDLoc &dl,
                                             SelectionDAG &DAG,
@@ -2266,6 +2301,17 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                      "Indirect calls must have a normal calling convention if "
                      "Import Call Optimization is enabled");
 
+  // Under the SafeStack varargs position convention this call's variadic
+  // stack arguments go on the caller's unsafe stack rather than in its native
+  // frame, so that the callee's va_list holds no safe-stack address. It only
+  // applies where the SafeStack pass ran: that pass maintains the unsafe
+  // stack pointer this code bumps, creates the global the bump reads it from,
+  // and guarantees a restore point on every path that unwinds past the call.
+  bool UseVarArgPosition =
+      isVarArg && Is64Bit && !IsWin64 &&
+      MF.getFunction().hasFnAttribute(Attribute::SafeStack) &&
+      useSafeStackVarArgPositionConvention(MF.getFunction());
+
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
@@ -2274,7 +2320,26 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   if (IsWin64)
     CCInfo.AllocateStack(32, Align(8));
 
-  CCInfo.AnalyzeArguments(Outs, CC_X86);
+  // Where the variadic block of the outgoing stack area begins.
+  int64_t VarArgStackOffset = 0;
+  if (UseVarArgPosition) {
+    // Assign the fixed arguments, align the outgoing stack area to 16, then
+    // assign the variadic ones, so the variadic block starts at a 16-byte
+    // aligned offset. That block is restaged at the callee's entry-time
+    // unsafe stack pointer, which is 16-byte aligned; without the padding the
+    // two would disagree by 8 bytes about where an over-aligned variadic
+    // argument lives, because va_arg rounds overflow_arg_area up to 16 for
+    // those while CCState aligned them against rsp. Nothing is ever written
+    // to the padding, so it costs nothing.
+    unsigned I = 0, E = Outs.size();
+    for (; I != E && !Outs[I].Flags.isVarArg(); ++I)
+      assignCallOperand(CCInfo, Outs[I], I);
+    VarArgStackOffset = CCInfo.AllocateStack(0, Align(16));
+    for (; I != E; ++I)
+      assignCallOperand(CCInfo, Outs[I], I);
+  } else {
+    CCInfo.AnalyzeArguments(Outs, CC_X86);
+  }
 
   // In vectorcall calling convention a second pass is required for the HVA
   // types.
@@ -2283,6 +2348,15 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   }
 
   bool IsMustTail = CLI.CB && CLI.CB->isMustTailCall();
+
+  // A sibling call can neither keep the staged arguments alive across the
+  // callee's own frame nor restore the unsafe stack pointer afterwards.
+  // musttail is exempt: it cannot be un-tail-called, and it needs no bump
+  // because the callee is meant to see the area this function's own caller
+  // staged. SafeStack rejects the case where that stops holding.
+  if (UseVarArgPosition && !IsMustTail)
+    isTailCall = false;
+
   bool IsSibcall = false;
   if (isTailCall && ShouldGuaranteeTCO) {
     // If we need to guarantee TCO for a non-musttail call, we just need to make
@@ -2452,6 +2526,35 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   SmallVector<std::pair<Register, SDValue>, 8> RegsToPass;
   SmallVector<SDValue, 8> MemOpChains;
 
+  // Open the variadic staging area on the unsafe stack. Bumping the unsafe
+  // stack pointer down past the area and leaving it there for the duration of
+  // the call is what makes the convention work: the callee's entry-time
+  // unsafe stack pointer, which its va_start takes as overflow_arg_area, is
+  // then the base of the area.
+  MVT PtrVT = getPointerTy(DAG.getDataLayout());
+  uint64_t VarArgSize = (UseVarArgPosition && !IsMustTail)
+                            ? alignTo(NumBytes - VarArgStackOffset, 16)
+                            : 0;
+  bool BumpUnsafeSP = VarArgSize != 0;
+  SDValue UnsafeSPHome, SavedUnsafeSP, VarArgBase;
+  MachinePointerInfo HomePtrInfo;
+  if (BumpUnsafeSP) {
+    UnsafeSPHome = getUnsafeStackPtrHome(DAG, dl, PtrVT);
+    HomePtrInfo = MachinePointerInfo(
+        cast<GlobalAddressSDNode>(UnsafeSPHome)->getGlobal());
+    SavedUnsafeSP = DAG.getLoad(PtrVT, dl, Chain, UnsafeSPHome, HomePtrInfo);
+    Chain = SavedUnsafeSP.getValue(1);
+    VarArgBase = DAG.getNode(ISD::SUB, dl, PtrVT, SavedUnsafeSP,
+                             DAG.getIntPtrConstant(VarArgSize, dl));
+    // Publish the bumped pointer before writing any argument. A signal
+    // handler that runs in between will allocate its own unsafe frames below
+    // the area rather than on top of the arguments staged in it. That order
+    // holds because the argument stores take this store's chain and, staged
+    // at an address no frame index describes, carry no pointer info anything
+    // could use to prove them independent of it.
+    Chain = DAG.getStore(Chain, dl, VarArgBase, UnsafeSPHome, HomePtrInfo);
+  }
+
   // The next loop assumes that the locations are in the same order of the
   // input arguments.
   assert(isSortedByValueNo(ArgLocs) &&
@@ -2550,11 +2653,24 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       }
     } else if (!IsSibcall && (!isTailCall || (isByVal && !IsMustTail))) {
       assert(VA.isMemLoc());
-      if (!StackPtr.getNode())
-        StackPtr = DAG.getCopyFromReg(Chain, dl, RegInfo->getStackRegister(),
-                                      getPointerTy(DAG.getDataLayout()));
-      MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
-                                             dl, DAG, VA, Flags, isByVal));
+      if (BumpUnsafeSP && Flags.isVarArg()) {
+        // Offsets within the staging area are relative to the base the callee
+        // will see, not to rsp, so drop the fixed arguments' share.
+        SDValue PtrOff =
+            DAG.getNode(ISD::ADD, dl, PtrVT, VarArgBase,
+                        DAG.getIntPtrConstant(
+                            VA.getLocMemOffset() - VarArgStackOffset, dl));
+        MemOpChains.push_back(
+            isByVal
+                ? CreateCopyOfByValArgument(Arg, PtrOff, Chain, Flags, DAG, dl)
+                : DAG.getStore(Chain, dl, Arg, PtrOff, MachinePointerInfo()));
+      } else {
+        if (!StackPtr.getNode())
+          StackPtr = DAG.getCopyFromReg(Chain, dl, RegInfo->getStackRegister(),
+                                        getPointerTy(DAG.getDataLayout()));
+        MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg, dl, DAG,
+                                               VA, Flags, isByVal));
+      }
     }
   }
 
@@ -2922,8 +3038,16 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   // Handle result values, copying them out of physregs into vregs that we
   // return.
-  return LowerCallResult(Chain, InGlue, CallConv, isVarArg, Ins, dl, DAG,
-                         InVals, RegMask);
+  SDValue Result = LowerCallResult(Chain, InGlue, CallConv, isVarArg, Ins, dl,
+                                   DAG, InVals, RegMask);
+
+  // Close the variadic staging area. Only the normal return path needs this:
+  // an unwind past the call reaches a restore point, which overwrites the
+  // unsafe stack pointer wholesale rather than undoing individual bumps.
+  if (BumpUnsafeSP)
+    Result = DAG.getStore(Result, dl, SavedUnsafeSP, UnsafeSPHome, HomePtrInfo);
+
+  return Result;
 }
 
 //===----------------------------------------------------------------------===//

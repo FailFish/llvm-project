@@ -127,9 +127,11 @@ class SafeStack {
   Value *VarArgsSlot = nullptr;
 
   /// Whether variadic calls in this function stage their stack arguments on
-  /// the unsafe stack, and whether the function actually contains one.
+  /// the unsafe stack, and whether the function actually contains one. A
+  /// musttail variadic call is tracked apart because it is not bumped.
   bool PositionConvention = false;
   bool HasVariadicCall = false;
+  bool HasMustTailVariadicCall = false;
 
   /// Unsafe stack alignment. Each stack frame must ensure that the stack is
   /// aligned to this value. We need to re-align the unsafe stack if the
@@ -397,6 +399,23 @@ void SafeStack::findInsts(Function &F,
                           SmallVectorImpl<Instruction *> &Returns,
                           SmallVectorImpl<Instruction *> &StackRestorePoints) {
   for (Instruction &I : instructions(&F)) {
+    // Under the position convention the backend bumps the unsafe stack
+    // pointer around each variadic call. An exception unwinding past such a
+    // call would leave the bump in place, so this function needs restore
+    // points even if it has nothing of its own on the unsafe stack --
+    // otherwise a catch-and-retry loop leaks the unsafe stack without bound.
+    // A musttail call is never bumped (the callee is meant to see the area
+    // its own caller staged), so it needs nothing restored.
+    if (PositionConvention)
+      if (auto *CB = dyn_cast<CallBase>(&I))
+        if (CB->getFunctionType()->isVarArg()) {
+          auto *CI = dyn_cast<CallInst>(CB);
+          if (CI && CI->isMustTailCall())
+            HasMustTailVariadicCall = true;
+          else
+            HasVariadicCall = true;
+        }
+
     if (auto AI = dyn_cast<AllocaInst>(&I)) {
       ++NumAllocas;
 
@@ -425,14 +444,6 @@ void SafeStack::findInsts(Function &F,
       if (auto *II = dyn_cast<IntrinsicInst>(CI))
         if (II->getIntrinsicID() == Intrinsic::vastart)
           VAStarts.push_back(II);
-      // Under the position convention the backend bumps the unsafe stack
-      // pointer around each variadic call. An exception unwinding past such a
-      // call would leave the bump in place, so this function needs restore
-      // points even if it has nothing of its own on the unsafe stack --
-      // otherwise a catch-and-retry loop leaks the unsafe stack without
-      // bound.
-      if (PositionConvention && CI->getFunctionType()->isVarArg())
-        HasVariadicCall = true;
     } else if (auto LP = dyn_cast<LandingPadInst>(&I)) {
       // Exception landing pads require stack restore.
       StackRestorePoints.push_back(LP);
@@ -828,13 +839,26 @@ bool SafeStack::run() {
   if (!VAStarts.empty())
     VarArgsSaveArea = TL.getVarArgsSaveAreaInfo(F);
 
+  bool HasUnsafeFrame = !StaticAllocas.empty() || !DynamicAllocas.empty() ||
+                        !ByValArguments.empty() || VarArgsSaveArea;
+
+  // A frameless variadic musttail thunk forwards the area its own caller
+  // staged, because nothing moves the unsafe stack pointer between the
+  // thunk's entry and the forwarded call. Give the thunk a frame and that
+  // stops being true -- the entry prologue stores a lowered stack pointer,
+  // so the callee's entry-time value no longer names the area's base -- and
+  // a musttail call cannot be un-tail-called to repair it.
+  if (HasMustTailVariadicCall && HasUnsafeFrame)
+    report_fatal_error("musttail variadic call in '" + F.getName() +
+                       "', which needs an unsafe stack frame, is incompatible "
+                       "with the SafeStack varargs position convention");
+
   if (StaticAllocas.empty() && DynamicAllocas.empty() &&
       ByValArguments.empty() && StackRestorePoints.empty() && !VarArgsSaveArea &&
       !HasVariadicCall)
     return false; // Nothing to do in this function.
 
-  if (!StaticAllocas.empty() || !DynamicAllocas.empty() ||
-      !ByValArguments.empty() || VarArgsSaveArea)
+  if (HasUnsafeFrame)
     ++NumUnsafeStackFunctions; // This function has the unsafe stack.
 
   if (!StackRestorePoints.empty())

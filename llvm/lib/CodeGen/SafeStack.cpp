@@ -126,6 +126,11 @@ class SafeStack {
   /// Address of the reserved save area, once the frame is laid out.
   Value *VarArgsSlot = nullptr;
 
+  /// Whether variadic calls in this function stage their stack arguments on
+  /// the unsafe stack, and whether the function actually contains one.
+  bool PositionConvention = false;
+  bool HasVariadicCall = false;
+
   /// Unsafe stack alignment. Each stack frame must ensure that the stack is
   /// aligned to this value. We need to re-align the unsafe stack if the
   /// alignment of any object on the stack exceeds this value.
@@ -420,6 +425,14 @@ void SafeStack::findInsts(Function &F,
       if (auto *II = dyn_cast<IntrinsicInst>(CI))
         if (II->getIntrinsicID() == Intrinsic::vastart)
           VAStarts.push_back(II);
+      // Under the position convention the backend bumps the unsafe stack
+      // pointer around each variadic call. An exception unwinding past such a
+      // call would leave the bump in place, so this function needs restore
+      // points even if it has nothing of its own on the unsafe stack --
+      // otherwise a catch-and-retry loop leaks the unsafe stack without
+      // bound.
+      if (PositionConvention && CI->getFunctionType()->isVarArg())
+        HasVariadicCall = true;
     } else if (auto LP = dyn_cast<LandingPadInst>(&I)) {
       // Exception landing pads require stack restore.
       StackRestorePoints.push_back(LP);
@@ -800,6 +813,8 @@ bool SafeStack::run() {
   // instrumentation to restore the unsafe stack pointer when necessary.
   SmallVector<Instruction *, 4> StackRestorePoints;
 
+  PositionConvention = TL.useSafeStackVarArgPositionConvention(F);
+
   // Find all static and dynamic alloca instructions that must be moved to the
   // unsafe stack, all return instructions and stack restore points.
   findInsts(F, StaticAllocas, DynamicAllocas, ByValArguments, Returns,
@@ -814,7 +829,8 @@ bool SafeStack::run() {
     VarArgsSaveArea = TL.getVarArgsSaveAreaInfo(F);
 
   if (StaticAllocas.empty() && DynamicAllocas.empty() &&
-      ByValArguments.empty() && StackRestorePoints.empty() && !VarArgsSaveArea)
+      ByValArguments.empty() && StackRestorePoints.empty() && !VarArgsSaveArea &&
+      !HasVariadicCall)
     return false; // Nothing to do in this function.
 
   if (!StaticAllocas.empty() || !DynamicAllocas.empty() ||

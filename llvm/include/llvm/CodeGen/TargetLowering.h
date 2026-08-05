@@ -2225,6 +2225,17 @@ public:
     return std::nullopt;
   }
 
+  /// Whether variadic calls in \p F use the SafeStack position convention:
+  /// the caller places variadic stack arguments on the unsafe stack, bumping
+  /// the unsafe stack pointer around the call, and the callee takes its
+  /// va_list's overflow_arg_area from its entry-time unsafe stack pointer.
+  ///
+  /// This is a calling-convention change, so it is only sound when caller and
+  /// callee are built the same way -- a whole-world build. It removes the
+  /// last safe-stack pointer from the va_list; where register-based accesses
+  /// cannot reach the safe stack it is required for varargs to work at all.
+  virtual bool useSafeStackVarArgPositionConvention(const Function &F) const;
+
   /// Returns the name of the symbol used to emit stack probes or the empty
   /// string if not applicable.
   virtual bool hasStackProbeSymbol(const MachineFunction &MF) const { return false; }

@@ -70,6 +70,13 @@ static cl::opt<bool> JumpIsExpensiveOverride(
     cl::desc("Do not create extra branches to split comparison logic."),
     cl::Hidden);
 
+/// Test scaffolding for the SafeStack varargs position convention on targets
+/// that do not enable it themselves. Not a product surface: the convention is
+/// an ABI change and is only sound in a whole-world build.
+static cl::opt<bool> SafeStackVarArgPositionConvention(
+    "safestack-vararg-position-convention", cl::init(false), cl::Hidden,
+    cl::desc("place variadic stack arguments on the unsafe stack"));
+
 static cl::opt<unsigned> MinimumJumpTableEntries
   ("min-jump-table-entries", cl::init(4), cl::Hidden,
    cl::desc("Set minimum number of entries to use a jump table."));
@@ -2346,6 +2353,11 @@ TargetLoweringBase::getDefaultSafeStackPointerLocation(IRBuilderBase &IRB,
                          (UseTLS ? "" : "not ") + "be thread-local");
   }
   return UnsafeStackPtr;
+}
+
+bool TargetLoweringBase::useSafeStackVarArgPositionConvention(
+    const Function &F) const {
+  return SafeStackVarArgPositionConvention;
 }
 
 Value *TargetLoweringBase::getSafeStackPointerLocation(

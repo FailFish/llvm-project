@@ -1756,9 +1756,15 @@ SDValue X86TargetLowering::LowerVASTARTSafeStack(SDValue Op,
       Chain, DL, DAG.getConstant(FuncInfo->getVarArgsFPOffset(), DL, MVT::i32),
       FIN, MachinePointerInfo()));
 
-  // overflow_arg_area still points into the caller's frame in Phase 1.
+  // Under the position convention the caller staged the variadic stack
+  // arguments on the unsafe stack, based at our entry-time unsafe stack
+  // pointer; otherwise they are where the psABI puts them, in the caller's
+  // frame.
   FIN = DAG.getNode(ISD::ADD, DL, PtrVT, FIN, DAG.getIntPtrConstant(4, DL));
-  SDValue OVFIN = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(), PtrVT);
+  SDValue OVFIN =
+      useSafeStackVarArgPositionConvention(MF.getFunction())
+          ? Op.getOperand(4)
+          : DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(), PtrVT);
   MemOps.push_back(DAG.getStore(Chain, DL, OVFIN, FIN, MachinePointerInfo()));
 
   // reg_save_area is the SafeStack slot.

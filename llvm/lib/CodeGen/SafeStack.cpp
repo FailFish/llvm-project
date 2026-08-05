@@ -96,6 +96,26 @@ static cl::opt<bool> ClColoring("safe-stack-coloring",
                                 cl::desc("enable safe stack coloring"),
                                 cl::Hidden, cl::init(true));
 
+/// Test scaffolding for the SP-relative policy, so that it can be
+/// exercised on targets that do not enable it. Not a product surface.
+static cl::opt<bool> ClForceSPRelative(
+    "safe-stack-force-sp-relative",
+    cl::desc("force SP-relative classification on any target"),
+    cl::Hidden, cl::init(false));
+
+static cl::opt<uint64_t> ClMaxNativeFrameSize(
+    "safe-stack-max-native-frame-size",
+    cl::desc("native frame budget used with "
+             "-safe-stack-force-sp-relative"),
+    cl::Hidden, cl::init(1ULL << 20));
+
+/// Move every alloca to the unsafe stack, for stress-testing the layout,
+/// coloring and runtime machinery. Not a product mode.
+static cl::opt<bool>
+    ClForceAllUnsafe("safe-stack-force-all-unsafe",
+                     cl::desc("move every alloca to the unsafe stack"),
+                     cl::Hidden, cl::init(false));
+
 namespace {
 
 /// The SafeStack pass splits the stack of each function into the safe
@@ -132,6 +152,14 @@ class SafeStack {
   bool PositionConvention = false;
   bool HasVariadicCall = false;
   bool HasMustTailVariadicCall = false;
+
+  /// When set, classification uses the strict SP-relative predicate
+  /// instead of the classic escape/bounds analysis.
+  std::optional<TargetLoweringBase::SPRelativePolicy> SPPolicy;
+
+  /// Running total of objects kept on the native stack, against
+  /// SPPolicy->MaxNativeFrameSize.
+  uint64_t NativeFrameSize = 0;
 
   /// Unsafe stack alignment. Each stack frame must ensure that the stack is
   /// aligned to this value. We need to re-align the unsafe stack if the
@@ -190,6 +218,15 @@ class SafeStack {
                                        ArrayRef<AllocaInst *> DynamicAllocas);
 
   bool IsSafeStackAlloca(const Value *AllocaPtr, uint64_t AllocaSize);
+
+  /// Constant-geometry test: every access to \p AllocaPtr folds into a
+  /// [SP + constant] memory operand, so its address is never materialized
+  /// into a general-purpose register.
+  bool IsSPRelativeAlloca(const Value *AllocaPtr);
+
+  /// Decide whether \p AllocaPtr (an alloca or a byval argument) may stay on
+  /// the native stack, under whichever classification policy is in effect.
+  bool keepOnNativeStack(const Value *AllocaPtr, uint64_t AllocaSize);
 
   bool IsMemIntrinsicSafe(const MemIntrinsic *MI, const Use &U,
                           const Value *AllocaPtr, uint64_t AllocaSize);
@@ -380,6 +417,126 @@ bool SafeStack::IsSafeStackAlloca(const Value *AllocaPtr, uint64_t AllocaSize) {
   return true;
 }
 
+bool SafeStack::IsSPRelativeAlloca(const Value *AllocaPtr) {
+  SmallPtrSet<const Value *, 16> Visited;
+  SmallVector<const Value *, 8> WorkList;
+  WorkList.push_back(AllocaPtr);
+
+  while (!WorkList.empty()) {
+    const Value *V = WorkList.pop_back_val();
+
+    // Block locality. Instruction selection works one block at a time, so a
+    // derived pointer used outside its defining block is exported through a
+    // virtual register -- which is exactly the address materialization this
+    // predicate exists to prevent. The alloca itself is exempt: a static
+    // alloca is a FrameIndex, a constant that gets rematerialized per block
+    // rather than exported.
+    if (V != AllocaPtr) {
+      const auto *Derived = cast<Instruction>(V);
+      for (const User *U : V->users())
+        if (cast<Instruction>(U)->getParent() != Derived->getParent()) {
+          LLVM_DEBUG(dbgs() << "[SafeStack] Not SP-relative: "
+                            << *AllocaPtr << "\n            cross-block use: "
+                            << *Derived << "\n");
+          return false;
+        }
+    }
+
+    for (const Use &UI : V->uses()) {
+      const auto *I = cast<Instruction>(UI.getUser());
+
+      switch (I->getOpcode()) {
+      case Instruction::Load:
+        // A load's only pointer-typed operand is the one being dereferenced.
+        break;
+
+      case Instruction::Store:
+        // Storing the pointer itself hands the address to memory.
+        if (V == I->getOperand(0)) {
+          LLVM_DEBUG(dbgs() << "[SafeStack] Not SP-relative: "
+                            << *AllocaPtr << "\n            store of address: "
+                            << *I << "\n");
+          return false;
+        }
+        break;
+
+      case Instruction::GetElementPtr:
+        // A variable index lowers to base-plus-index addressing, which needs
+        // the base in a register. Note this is stricter than the classic
+        // analysis, which would accept an index SCEV proves to be in bounds.
+        if (!cast<GetElementPtrInst>(I)->hasAllConstantIndices()) {
+          LLVM_DEBUG(dbgs() << "[SafeStack] Not SP-relative: "
+                            << *AllocaPtr << "\n            variable index: "
+                            << *I << "\n");
+          return false;
+        }
+        [[fallthrough]];
+
+      case Instruction::BitCast:
+      case Instruction::AddrSpaceCast:
+        if (Visited.insert(I).second)
+          WorkList.push_back(I);
+        break;
+
+      case Instruction::Call:
+      case Instruction::Invoke:
+        // Lifetime markers and debug intrinsics do not form an address.
+        // Everything else -- including memcpy and friends, whose libcall
+        // takes the pointer in a register -- does.
+        if (I->isLifetimeStartOrEnd() || isa<DbgInfoIntrinsic>(I))
+          break;
+        LLVM_DEBUG(dbgs() << "[SafeStack] Not SP-relative: " << *AllocaPtr
+                          << "\n            call: " << *I << "\n");
+        return false;
+
+      default:
+        // phi and select of derived pointers, ptrtoint, icmp, ret, va_arg:
+        // all either leak the address or require it in a register.
+        LLVM_DEBUG(dbgs() << "[SafeStack] Not SP-relative: " << *AllocaPtr
+                          << "\n            unsupported use: " << *I << "\n");
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool SafeStack::keepOnNativeStack(const Value *AllocaPtr, uint64_t AllocaSize) {
+  if (ClForceAllUnsafe)
+    return false;
+
+  if (!SPPolicy)
+    return IsSafeStackAlloca(AllocaPtr, AllocaSize);
+
+  if (const auto *AI = dyn_cast<AllocaInst>(AllocaPtr)) {
+    // Stated explicitly rather than inherited from the use walk: a VLA with
+    // no uses passes the walk vacuously, yet still emits a runtime-sized
+    // stack adjustment.
+    if (!AI->isStaticAlloca())
+      return false;
+    // Over-aligned objects force stack realignment, which makes the backend
+    // address fixed objects off the frame pointer instead of the stack
+    // pointer.
+    if (AI->getAlign() > StackAlignment)
+      return false;
+  } else if (MaybeAlign A = cast<Argument>(AllocaPtr)->getParamAlign()) {
+    if (*A > StackAlignment)
+      return false;
+  }
+
+  if (!IsSPRelativeAlloca(AllocaPtr))
+    return false;
+
+  // Budget clause: keep the native frame within the displacement range that
+  // the target can address, evicting oversized objects so that valid code
+  // keeps compiling rather than tripping a later hard error.
+  if (AllocaSize > SPPolicy->MaxNativeFrameSize - NativeFrameSize)
+    return false;
+  NativeFrameSize += AllocaSize;
+  return true;
+}
+
 Value *SafeStack::getStackGuard(IRBuilder<> &IRB, Function &F) {
   Value *StackGuardVar = TL.getIRStackGuard(IRB, Libcalls);
   Module *M = F.getParent();
@@ -420,7 +577,7 @@ void SafeStack::findInsts(Function &F,
       ++NumAllocas;
 
       uint64_t Size = getStaticAllocaAllocationSize(AI);
-      if (IsSafeStackAlloca(AI, Size))
+      if (keepOnNativeStack(AI, Size))
         continue;
 
       if (AI->isStaticAlloca()) {
@@ -457,7 +614,9 @@ void SafeStack::findInsts(Function &F,
     if (!Arg.hasByValAttr())
       continue;
     uint64_t Size = DL.getTypeStoreSize(Arg.getParamByValType());
-    if (IsSafeStackAlloca(&Arg, Size))
+    // A byval that passes stays where the caller put it, with no copy at all;
+    // only failing ones get an unsafe slot and the memcpy that fills it.
+    if (keepOnNativeStack(&Arg, Size))
       continue;
 
     ++NumUnsafeByValArguments;
@@ -825,6 +984,10 @@ bool SafeStack::run() {
   SmallVector<Instruction *, 4> StackRestorePoints;
 
   PositionConvention = TL.useSafeStackVarArgPositionConvention(F);
+
+  SPPolicy = TL.getSPRelativePolicy(F);
+  if (!SPPolicy && ClForceSPRelative)
+    SPPolicy = TargetLoweringBase::SPRelativePolicy{ClMaxNativeFrameSize};
 
   // Find all static and dynamic alloca instructions that must be moved to the
   // unsafe stack, all return instructions and stack restore points.

@@ -2236,6 +2236,35 @@ public:
   /// cannot reach the safe stack it is required for varargs to work at all.
   virtual bool useSafeStackVarArgPositionConvention(const Function &F) const;
 
+  /// Policy for SafeStack's strict SP-relative classification.
+  struct SPRelativePolicy {
+    /// Cumulative budget for objects kept on the native stack. Allocas that
+    /// would push the native frame past this are moved to the unsafe stack.
+    uint64_t MaxNativeFrameSize;
+  };
+
+  /// Returns the SP-relative placement policy for \p F, or std::nullopt to
+  /// use SafeStack's classic escape/bounds classification.
+  ///
+  /// Under this policy an object stays on the native stack only if every
+  /// access to it provably folds into a [SP + constant] memory operand, so
+  /// that its address is never materialized into a general-purpose register.
+  /// It is stricter than the classic analysis in both directions: a
+  /// variable-index access proven in bounds by SCEV is classically safe but
+  /// fails here, because it lowers to base-plus-index addressing.
+  ///
+  /// This is only useful to targets where the safe stack is reachable *only*
+  /// through SP-relative addressing -- for instance software fault isolation
+  /// that places the safe stack outside the sandbox and masks every
+  /// register-based access. There, an address materialized into a register is
+  /// unusable, so the classic analysis is not merely imprecise but wrong.
+  /// Everywhere else the safe stack is ordinary memory and this policy only
+  /// costs performance, which is why it defaults off.
+  virtual std::optional<SPRelativePolicy>
+  getSPRelativePolicy(const Function &F) const {
+    return std::nullopt;
+  }
+
   /// Returns the name of the symbol used to emit stack probes or the empty
   /// string if not applicable.
   virtual bool hasStackProbeSymbol(const MachineFunction &MF) const { return false; }

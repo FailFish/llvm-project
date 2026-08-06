@@ -1233,6 +1233,9 @@ void X86::X86MCLFIRewriter::doRewriteInst(const MCInst &Inst, MCStreamer &Out,
 
 bool X86::X86MCLFIRewriter::rewriteInst(const MCInst &Inst, MCStreamer &Out,
                                         const MCSubtargetInfo &STI) {
+  if (Inst.getFlags() & IP_SKIP_REWRITE)
+    return false;
+
   // The guard prevents rewrite-recursion when we emit instructions from inside
   // the rewriter (such instructions should not be rewritten again).
   if (!Enabled || Guard)

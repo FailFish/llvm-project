@@ -14,6 +14,7 @@ add_bolt_tool(llvm-bolt-regres
   RegReallocPasses.cpp
   SpareRegisters.cpp
   PseudoRewriter.cpp
+  ReservedRegLoweringPass.cpp
   DISABLE_LLVM_LINK_LLVM_DYLIB
   )
 

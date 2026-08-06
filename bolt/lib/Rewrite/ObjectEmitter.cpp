@@ -47,6 +47,9 @@ void ObjectEmitter::emitFunction(BinaryFunction &BF) {
       ELF::SHF_ALLOC | ELF::SHF_EXECINSTR);
   Streamer.switchSection(Section);
 
+  if (BC.TheTriple->isLFI())
+    Streamer.emitCodeAlignment(Align(32), BC.STI.get());
+
   // Emit symbols for the function
   for (MCSymbol *Sym : BF.getSymbols()) {
     Streamer.emitLabel(Sym);
@@ -89,6 +92,9 @@ void ObjectEmitter::emitDataSections() {
 
     auto SymItMap = SectionSymbolsMap.find(BSection.getName().str());
     if (SymItMap != SectionSymbolsMap.end()) {
+      MCSymbol *SecStart = BC.Ctx->createTempSymbol();
+      Streamer.emitLabel(SecStart);
+
       for (const ObjectSymbolInfo &SymInfo : SymItMap->second) {
         if (SymInfo.IsSectionSymbol)
           continue;
@@ -108,12 +114,16 @@ void ObjectEmitter::emitDataSections() {
         if (SymInfo.Type == SymbolRef::ST_Data)
           Streamer.emitSymbolAttribute(SymInfo.Symbol, MCSA_ELF_TypeObject);
 
-        Streamer.emitLabel(SymInfo.Symbol);
-
         if (SymInfo.Size > 0)
           Streamer.emitELFSize(
               SymInfo.Symbol,
               MCConstantExpr::create(SymInfo.Size, *BC.Ctx));
+
+        const MCExpr *SymExpr = MCBinaryExpr::createAdd(
+            MCSymbolRefExpr::create(SecStart, *BC.Ctx),
+            MCConstantExpr::create(SymInfo.SectionOffset, *BC.Ctx),
+            *BC.Ctx);
+        Streamer.emitAssignment(SymInfo.Symbol, SymExpr);
       }
     }
 

@@ -77,6 +77,18 @@ static cl::opt<bool> SafeStackVarArgPositionConvention(
     "safestack-vararg-position-convention", cl::init(false), cl::Hidden,
     cl::desc("place variadic stack arguments on the unsafe stack"));
 
+/// Test scaffolding for the SP-relative policy, so that it can be exercised on
+/// targets that do not enable it. Not a product surface. It lives here rather
+/// than in the SafeStack pass because the machine-level check that enforces
+/// the policy's contract has to see the same answer the pass acted on.
+static cl::opt<bool>
+    ForceSPRelative("safe-stack-force-sp-relative", cl::init(false), cl::Hidden,
+                    cl::desc("force SP-relative classification on any target"));
+
+static cl::opt<uint64_t> MaxNativeFrameSize(
+    "safe-stack-max-native-frame-size", cl::init(1ULL << 20), cl::Hidden,
+    cl::desc("native frame budget used with -safe-stack-force-sp-relative"));
+
 static cl::opt<unsigned> MinimumJumpTableEntries
   ("min-jump-table-entries", cl::init(4), cl::Hidden,
    cl::desc("Set minimum number of entries to use a jump table."));
@@ -2358,6 +2370,13 @@ TargetLoweringBase::getDefaultSafeStackPointerLocation(IRBuilderBase &IRB,
 bool TargetLoweringBase::useSafeStackVarArgPositionConvention(
     const Function &F) const {
   return SafeStackVarArgPositionConvention;
+}
+
+std::optional<TargetLoweringBase::SPRelativePolicy>
+TargetLoweringBase::getSPRelativePolicy(const Function &F) const {
+  if (!ForceSPRelative)
+    return std::nullopt;
+  return SPRelativePolicy{MaxNativeFrameSize};
 }
 
 Value *TargetLoweringBase::getSafeStackPointerLocation(

@@ -538,6 +538,17 @@ void X86PassConfig::addPreRegAlloc() {
     addPass(createX86PreTileConfigLegacyPass());
   else
     addPass(createX86FastPreTileConfigLegacyPass());
+
+  // Check SafeStack's SP-relative policy while frame indices are still
+  // symbolic and before register allocation adds spill slots of its own.
+  //
+  // The triple is what decides whether to schedule this at all, because a
+  // pass pipeline is fixed per module while +lfi-safestack is a per-function
+  // feature. The pass gates itself on the policy hook, which is where the
+  // feature is actually consulted, so scheduling it here costs nothing on a
+  // function that does not use the policy.
+  if (TM->getTargetTriple().isLFI())
+    addPass(createSafeStackFrameCheckPass());
 }
 
 void X86PassConfig::addMachineSSAOptimization() {

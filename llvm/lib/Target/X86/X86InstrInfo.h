@@ -440,6 +440,9 @@ public:
                                const Register NullValueReg,
                                const TargetRegisterInfo *TRI) const override;
 
+  bool isSPRelativeFrameIndexUse(const MachineInstr &MI,
+                                 unsigned OpIdx) const override;
+
   bool getMemOperandsWithOffsetWidth(
       const MachineInstr &LdSt,
       SmallVectorImpl<const MachineOperand *> &BaseOps, int64_t &Offset,

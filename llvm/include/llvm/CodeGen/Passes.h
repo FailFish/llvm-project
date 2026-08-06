@@ -516,6 +516,9 @@ createGlobalMergePass(const TargetMachine *TM, unsigned MaximalOffset,
 /// protect against stack-based overflow vulnerabilities.
 LLVM_ABI FunctionPass *createSafeStackPass();
 
+/// Enforce SafeStack's SP-relative policy on the selected machine code.
+LLVM_ABI FunctionPass *createSafeStackFrameCheckPass();
+
 /// This pass detects subregister lanes in a virtual register that are used
 /// independently of other lanes and splits them into separate virtual
 /// registers.

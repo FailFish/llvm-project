@@ -2260,10 +2260,13 @@ public:
   /// unusable, so the classic analysis is not merely imprecise but wrong.
   /// Everywhere else the safe stack is ordinary memory and this policy only
   /// costs performance, which is why it defaults off.
+  ///
+  /// Both the SafeStack pass and the machine-level check that enforces the
+  /// policy's contract consult this, and they have to get the same answer, so
+  /// an override that declines must fall through to this implementation
+  /// rather than returning std::nullopt directly.
   virtual std::optional<SPRelativePolicy>
-  getSPRelativePolicy(const Function &F) const {
-    return std::nullopt;
-  }
+  getSPRelativePolicy(const Function &F) const;
 
   /// Returns the name of the symbol used to emit stack probes or the empty
   /// string if not applicable.

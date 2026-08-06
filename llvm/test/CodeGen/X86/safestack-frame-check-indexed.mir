@@ -1,0 +1,39 @@
+# An access that is a memory operand, so the generic part of the check is
+# satisfied, but whose address is the frame index plus a register rather than a
+# constant. That does not resolve to stack-pointer-plus-offset either, and
+# catching it is what the X86 override of isSPRelativeFrameIndexUse adds over
+# the target-independent default.
+#
+# U5's predicate rejects variable-index accesses at the IR level, so this is
+# unreachable from C by construction; it is here to keep a later pass from
+# folding an index in without anyone noticing.
+#
+# RUN: not --crash llc -mtriple=x86_64_lfi-linux-musl \
+# RUN:   -safe-stack-force-sp-relative -run-pass=safe-stack-frame-check %s -o - 2>&1 \
+# RUN:   | FileCheck %s
+
+# CHECK: SafeStack: the address of 'p' in 'indexed_access' is not reachable
+# CHECK-SAME: stack-pointer-relative
+# CHECK: MOV32mi %stack.0.p, 4, $rcx
+
+--- |
+  target triple = "x86_64_lfi-linux-musl"
+
+  define void @indexed_access() safestack {
+    %p = alloca [4 x i32], align 4
+    ret void
+  }
+...
+---
+name:            indexed_access
+tracksRegLiveness: true
+frameInfo:
+  maxAlignment:    4
+stack:
+  - { id: 0, name: p, type: default, offset: 0, size: 16, alignment: 4 }
+body:             |
+  bb.0:
+    liveins: $rcx
+    MOV32mi %stack.0.p, 4, $rcx, 0, $noreg, 7 :: (store (s32) into %ir.p)
+    RET 0
+...

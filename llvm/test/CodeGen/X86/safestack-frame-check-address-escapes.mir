@@ -1,0 +1,37 @@
+# The SP-relative policy promises that an object it keeps on the native stack
+# is only ever reached stack-pointer-relative. Here instruction selection has
+# instead computed its address into a register, which on a target that wants
+# this policy is not slower but wrong -- the safe stack is reachable no other
+# way. Written by hand because the SafeStack pass would have moved any alloca
+# whose address escapes to the unsafe stack, so this is unreachable from C.
+#
+# RUN: not --crash llc -mtriple=x86_64_lfi-linux-musl \
+# RUN:   -safe-stack-force-sp-relative -run-pass=safe-stack-frame-check %s -o - 2>&1 \
+# RUN:   | FileCheck %s
+
+# CHECK: SafeStack: the address of 'p' in 'lea_of_kept_native' is not reachable
+# CHECK-SAME: stack-pointer-relative, but the SP-relative policy kept it on the
+# CHECK-SAME: native stack
+# CHECK: LEA64r
+
+--- |
+  target triple = "x86_64_lfi-linux-musl"
+
+  define i32 @lea_of_kept_native() safestack {
+    %p = alloca [4 x i32], align 4
+    ret i32 0
+  }
+...
+---
+name:            lea_of_kept_native
+tracksRegLiveness: true
+frameInfo:
+  maxAlignment:    4
+stack:
+  - { id: 0, name: p, type: default, offset: 0, size: 16, alignment: 4 }
+body:             |
+  bb.0:
+    $rax = LEA64r %stack.0.p, 1, $noreg, 0, $noreg
+    $eax = MOV32ri 0
+    RET 0, $eax
+...

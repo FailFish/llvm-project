@@ -4670,6 +4670,30 @@ bool X86InstrInfo::preservesZeroValueInReg(
   llvm_unreachable("Should be handled above!");
 }
 
+bool X86InstrInfo::isSPRelativeFrameIndexUse(const MachineInstr &MI,
+                                             unsigned OpIdx) const {
+  // Anything that is not a memory access can only be computing the address.
+  if (!MI.mayLoad() && !MI.mayStore())
+    return false;
+
+  int MemRefBegin = X86II::getMemoryOperandNo(MI.getDesc().TSFlags);
+  if (MemRefBegin < 0)
+    return false;
+  MemRefBegin += X86II::getOperandBias(MI.getDesc());
+
+  // The frame index has to be the base of that memory operand rather than, say,
+  // a value being stored.
+  if (OpIdx != unsigned(MemRefBegin + X86::AddrBaseReg))
+    return false;
+
+  // No index register, and a displacement that is a constant rather than a
+  // relocation, so the whole address is the frame index plus a fixed offset.
+  if (MI.getOperand(MemRefBegin + X86::AddrIndexReg).getReg() !=
+      X86::NoRegister)
+    return false;
+  return MI.getOperand(MemRefBegin + X86::AddrDisp).isImm();
+}
+
 bool X86InstrInfo::getMemOperandsWithOffsetWidth(
     const MachineInstr &MemOp, SmallVectorImpl<const MachineOperand *> &BaseOps,
     int64_t &Offset, bool &OffsetIsScalable, LocationSize &Width,

@@ -212,6 +212,7 @@ add_llvm_component_library(LLVMCodeGen
   RegisterBank.cpp
   RegisterBankInfo.cpp
   SafeStack.cpp
+  SafeStackFrameCheck.cpp
   SafeStackLayout.cpp
   SanitizerBinaryMetadata.cpp
   ScheduleDAG.cpp

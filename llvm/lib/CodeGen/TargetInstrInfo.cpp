@@ -1732,6 +1732,11 @@ CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
   return new ScoreboardHazardRecognizer(II, DAG, "post-RA-sched");
 }
 
+bool TargetInstrInfo::isSPRelativeFrameIndexUse(const MachineInstr &MI,
+                                                unsigned OpIdx) const {
+  return MI.mayLoad() || MI.mayStore();
+}
+
 // Default implementation of getMemOperandWithOffset.
 bool TargetInstrInfo::getMemOperandWithOffset(
     const MachineInstr &MI, const MachineOperand *&BaseOp, int64_t &Offset,

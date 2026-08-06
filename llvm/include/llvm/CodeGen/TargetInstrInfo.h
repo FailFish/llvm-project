@@ -1603,6 +1603,22 @@ public:
     return std::nullopt;
   }
 
+  /// Whether the frame-index operand \p OpIdx of \p MI is used in a way that
+  /// resolves to a stack-pointer-relative address with a constant offset, and
+  /// so never materializes the object's address into a register.
+  ///
+  /// SafeStack's SP-relative policy (TargetLowering::getSPRelativePolicy) is
+  /// stated as a promise about every object it keeps on the native stack, and
+  /// this is what makes that promise checkable after instruction selection.
+  ///
+  /// The default answers only the part that can be asked without knowing the
+  /// target's addressing form: an instruction that does not access memory can
+  /// only be computing the address, which is exactly what the policy forbids.
+  /// Targets that keep objects native under the policy should override this to
+  /// also reject indexed and symbolic forms.
+  LLVM_ABI virtual bool isSPRelativeFrameIndexUse(const MachineInstr &MI,
+                                                  unsigned OpIdx) const;
+
   /// Check if it's possible and beneficial to fold the addressing computation
   /// `AddrI` into the addressing mode of the load/store instruction `MemI`. The
   /// memory instruction is a user of the virtual register `Reg`, which in turn

@@ -96,19 +96,6 @@ static cl::opt<bool> ClColoring("safe-stack-coloring",
                                 cl::desc("enable safe stack coloring"),
                                 cl::Hidden, cl::init(true));
 
-/// Test scaffolding for the SP-relative policy, so that it can be
-/// exercised on targets that do not enable it. Not a product surface.
-static cl::opt<bool> ClForceSPRelative(
-    "safe-stack-force-sp-relative",
-    cl::desc("force SP-relative classification on any target"),
-    cl::Hidden, cl::init(false));
-
-static cl::opt<uint64_t> ClMaxNativeFrameSize(
-    "safe-stack-max-native-frame-size",
-    cl::desc("native frame budget used with "
-             "-safe-stack-force-sp-relative"),
-    cl::Hidden, cl::init(1ULL << 20));
-
 /// Move every alloca to the unsafe stack, for stress-testing the layout,
 /// coloring and runtime machinery. Not a product mode.
 static cl::opt<bool>
@@ -986,8 +973,6 @@ bool SafeStack::run() {
   PositionConvention = TL.useSafeStackVarArgPositionConvention(F);
 
   SPPolicy = TL.getSPRelativePolicy(F);
-  if (!SPPolicy && ClForceSPRelative)
-    SPPolicy = TargetLoweringBase::SPRelativePolicy{ClMaxNativeFrameSize};
 
   // Find all static and dynamic alloca instructions that must be moved to the
   // unsafe stack, all return instructions and stack restore points.

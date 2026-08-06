@@ -169,6 +169,9 @@ class LLVM_LIBRARY_VISIBILITY X86TargetInfo : public TargetInfo {
   bool HasUSERMSR = false;
   bool HasUINTR = false;
   bool HasCRC32 = false;
+  // Raw feature bit. Everything that acts on it must also check the triple,
+  // mirroring X86Subtarget::hasLFISafeStack().
+  bool HasLFISafeStackFeature = false;
   bool HasX87 = false;
   bool HasEGPR = false;
   bool HasPush2Pop2 = false;

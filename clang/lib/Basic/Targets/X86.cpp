@@ -455,6 +455,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasJMPABS = true;
     } else if (Feature == "+branch-hint") {
       HasBranchHint = true;
+    } else if (Feature == "+lfi-safestack") {
+      HasLFISafeStackFeature = true;
     }
 
     X86SSEEnum Level = llvm::StringSwitch<X86SSEEnum>(Feature)
@@ -536,6 +538,19 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
 
   if (getTriple().isLFI()) {
     Builder.defineMacro("__LFI__");
+
+    if (HasLFISafeStackFeature) {
+      // Frozen LFI ABI constants. They are restated here because clang cannot
+      // include headers from llvm/lib; the values MUST MATCH SafeStackSize and
+      // SafeStackMaxDisp in
+      // llvm/lib/Target/X86/MCTargetDesc/X86MCLFIRewriter.h, and LFI.rst is
+      // the normative specification for both.
+      //
+      // musl and libunwind key off these being defined at all, which is how
+      // they tell a safe-stack-out-of-sandbox world from a plain LFI one.
+      Builder.defineMacro("__LFI_SAFESTACK_SIZE__", "8388608");     // 8 MiB
+      Builder.defineMacro("__LFI_SAFESTACK_MAX_DISP__", "1048576"); // 1 MiB
+    }
   }
 
   Builder.defineMacro("__SEG_GS");

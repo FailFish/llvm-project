@@ -492,6 +492,15 @@ def FeatureNoLFIStores : SubtargetFeature<"no-lfi-stores", "NoLFIStores", "true"
   "Disable LFI sandboxing for store instructions">;
 def FeatureNoLFISegue : SubtargetFeature<"no-lfi-segue", "NoLFISegue", "true",
   "Disable LFI use of GS segment for memory sandboxing">;
+// Places the SafeStack safe stack outside the sandbox, where a sandboxed store
+// cannot reach it. Nothing here consults the feature directly: every consumer
+// goes through X86Subtarget::hasLFISafeStack(), which folds in the triple
+// check, so the feature is inert rather than an ABI change off LFI.
+// The attribute is named for the raw bit, so that the generated
+// hasLFISafeStackFeature() cannot be mistaken for the folded accessor.
+def FeatureLFISafeStack : SubtargetFeature<"lfi-safestack",
+  "HasLFISafeStackFeature", "true",
+  "Place the SafeStack safe stack outside the LFI sandbox">;
 
 //===----------------------------------------------------------------------===//
 // X86 Subtarget Tuning features

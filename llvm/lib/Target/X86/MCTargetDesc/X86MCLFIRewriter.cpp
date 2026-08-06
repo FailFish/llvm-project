@@ -31,12 +31,8 @@ static constexpr MCRegister LFIScratchReg = X86::R11;
 static constexpr MCRegister LFITPReg = X86::R15;
 static constexpr MCRegister LFIBaseSeg = X86::GS;
 
-// Indirect branch targets must be aligned to a multiple of this size.
-static constexpr unsigned BundleSize = 32;
-
-// Byte offset into the context register file (pointed to by R15) where the
-// thread pointer is stored.
-static constexpr int TPOffset = 16;
+// BundleSize, TPOffset and the safe-stack constants live in the header, where
+// X86 CodeGen can reach them too.
 
 //===----------------------------------------------------------------------===//
 // Feature checking
@@ -371,7 +367,7 @@ static void emitTPLoad(MCRegister Reg, MCStreamer &Out,
   Mov.addOperand(MCOperand::createReg(LFITPReg));
   Mov.addOperand(MCOperand::createImm(1));
   Mov.addOperand(MCOperand::createReg(X86::NoRegister));
-  Mov.addOperand(MCOperand::createImm(TPOffset));
+  Mov.addOperand(MCOperand::createImm(X86::TPOffset));
   Mov.addOperand(MCOperand::createReg(X86::NoRegister));
   Out.emitInstruction(Mov, STI);
 }
@@ -414,7 +410,7 @@ void X86::X86MCLFIRewriter::rewriteFSAccess(const MCInst &Inst, MCStreamer &Out,
   if (!HasBase && !HasIndex && !HasDisp) {
     MCInst Modified(Inst);
     Modified.getOperand(MemIdx).setReg(LFITPReg);
-    Modified.getOperand(MemIdx + 3).setImm(TPOffset);
+    Modified.getOperand(MemIdx + 3).setImm(X86::TPOffset);
     Modified.getOperand(MemIdx + 4).setReg(X86::NoRegister);
     return Out.emitInstruction(Modified, STI);
   }

@@ -311,6 +311,16 @@ public:
 
   bool isLFI() const { return TargetTriple.isLFI(); }
 
+  /// Whether the safe stack is placed outside the sandbox, where the only way
+  /// to reach it is rsp-relative addressing -- every register-based access is
+  /// masked back into the sandbox.
+  ///
+  /// The triple check is folded in here rather than left to each caller, so
+  /// that asking for the feature on a non-LFI target is inert instead of a
+  /// silent ABI change. Every consumer must go through this accessor rather
+  /// than the raw hasLFISafeStackFeature().
+  bool hasLFISafeStack() const { return HasLFISafeStackFeature && isLFI(); }
+
   bool isTargetWindowsMSVC() const {
     return TargetTriple.isWindowsMSVCEnvironment();
   }

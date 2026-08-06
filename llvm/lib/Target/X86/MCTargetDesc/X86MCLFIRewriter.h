@@ -28,6 +28,42 @@ class MCSubtargetInfo;
 
 namespace X86 {
 
+//===----------------------------------------------------------------------===//
+// LFI ABI constants
+//
+// Frozen parts of the LFI ABI, shared by the MC rewriter and X86 CodeGen.
+// LFI.rst is the normative specification; clang restates the two values it
+// predefines, because it cannot include headers from llvm/lib.
+//
+// The guard size is deliberately absent: it is the runtime's to choose.
+//===----------------------------------------------------------------------===//
+
+/// Indirect branch targets must be aligned to a multiple of this size.
+constexpr unsigned BundleSize = 32;
+
+/// Byte offset into the context register file (pointed to by R15) where the
+/// thread pointer is stored.
+constexpr int TPOffset = 16;
+
+/// Byte offset into the same file holding the current thread's unsafe stack
+/// pointer. Unlike the rest of the file this slot is not sensitive -- it is
+/// sandboxed code's own bookkeeping -- so it is the one offset a sandboxed
+/// access may name.
+constexpr int UnsafeStackPtrOffset = 24;
+
+/// Size and alignment of a thread's safe stack region. Being a power of two
+/// and self-aligned is what lets the rewriter re-anchor rsp with a single
+/// mask, and what lets code test an address for membership without knowing
+/// where the region was mapped.
+constexpr uint64_t SafeStackSize = 8 * 1024 * 1024;
+
+/// Bounds on the rsp-relative displacements the rewriter accepts. Anything
+/// reaching further could leave the region between the check and the access,
+/// so a frame this large is rejected outright rather than rewritten: masking
+/// an rsp-based safe-stack access would redirect it into the sandbox.
+constexpr int64_t SafeStackMaxDisp = 1024 * 1024;
+constexpr int64_t SafeStackMaxNegDisp = 4 * 1024;
+
 class X86MCLFIRewriter : public MCLFIRewriter {
 public:
   X86MCLFIRewriter(MCContext &Ctx, std::unique_ptr<MCRegisterInfo> &&RI,

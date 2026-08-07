@@ -1910,6 +1910,11 @@ MCDisassembler::DecodeStatus X86GenericDisassembler::getInstruction(
       if (Insn.hasLockPrefix)
         Flags |= X86::IP_HAS_LOCK;
     }
+    if (Insn.eaDisplacement == EA_DISP_32)
+      Flags |= X86::IP_USE_DISP32;
+    else if (Insn.eaDisplacement == EA_DISP_8)
+      Flags |= X86::IP_USE_DISP8;
+
     Instr.setFlags(Flags);
   }
   return (!Ret) ? Success : Fail;

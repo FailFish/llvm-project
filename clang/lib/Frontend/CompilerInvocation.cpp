@@ -5111,6 +5111,14 @@ bool CompilerInvocation::CreateFromArgsImpl(
   if (LangOpts.OpenMPIsTargetDevice)
     Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
 
+  // Without the feature the safe stack would sit inside the sandbox, where
+  // sandboxed code can overwrite it. The driver's config file supplies both
+  // together, so reaching this means -cc1 was invoked directly.
+  if (LangOpts.Sanitize.has(SanitizerKind::SafeStack) && T.isLFI() &&
+      !llvm::is_contained(Res.getTargetOpts().FeaturesAsWritten,
+                          "+lfi-safestack"))
+    Diags.Report(diag::err_drv_lfi_safestack_requires_feature);
+
   ParseCodeGenArgs(Res.getCodeGenOpts(), Args, DashX, Diags, T,
                    Res.getFrontendOpts().OutputFile, LangOpts);
 

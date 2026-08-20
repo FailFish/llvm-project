@@ -18,6 +18,10 @@ def err_drv_unsupported_opt_for_target : Error<
   "unsupported option '%0' for target '%1'">;
 def err_drv_unsupported_opt_for_language_mode : Error<
   "unsupported option '%0' for language mode '%1'">;
+def err_drv_lfi_safestack_requires_feature : Error<
+  "'-fsanitize=safe-stack' on an LFI target requires the 'lfi-safestack' "
+  "target feature, without which the safe stack would be placed inside the "
+  "sandbox">;
 def err_drv_unsupported_option_argument : Error<
   "unsupported argument '%1' to option '%0'">;
 def err_drv_unsupported_option_argument_for_target : Error<
